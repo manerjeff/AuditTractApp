@@ -1,268 +1,380 @@
 import SwiftUI
-import SwiftData
 
 struct ControlCenterView: View {
-    let activeWorkspace: UserWorkspace
-    @ObservedObject var dataManager: AuditEstimator
-    let initialFrameworkKey: String
-    @Binding var isPresented: Bool
+    @EnvironmentObject var estimator: AuditEstimator
+    @StateObject private var syncManager = ControlSyncManager.shared
     
-    @Environment(\.modelContext) private var modelContext
+    // Active framework scope (Defaults to NIST)
+    @State private var activeFrameworkKey: String = "NIST"
+    @State private var selectedControlID: String? = nil
+    @State private var searchText: String = ""
     
-    @State private var selectedFrameworkKey: String = "SOC2"
-    @State private var selectedControlID: String = ""
-    @State private var searchFilter: String = ""
-    
-    // Status and Notes State
-    @State private var currentStatus: String = "NOT EVALUATED"
+    // Workpaper State
     @State private var currentNotes: String = ""
+    @State private var currentStatus: String = "Not Evaluated"
+    @State private var evidenceItems: [String] = []
     
-    var currentFramework: Framework {
-        dataManager.frameworks.first(where: { $0.key == selectedFrameworkKey }) ?? dataManager.frameworks[0]
-    }
+    // Modal Sheets
+    @State private var showingAddEvidenceSheet: Bool = false
+    @State private var newEvidenceName: String = ""
     
-    var frameworkTasks: [AuditTask] {
-        dataManager.tasks.filter { $0.frameworkKey == selectedFrameworkKey }
-    }
+    // AppStorage Persistence
+    @AppStorage("control_statuses_json") private var savedStatusesData: Data = Data()
+    @AppStorage("control_notes_json") private var savedNotesData: Data = Data()
+    @AppStorage("control_evidence_json") private var savedEvidenceData: Data = Data()
     
+    // MARK: - Single-Framework Scope Filtering
     var filteredControls: [AuditTask] {
-        if searchFilter.isEmpty {
-            return frameworkTasks
-        } else {
-            return frameworkTasks.filter {
-                $0.id.localizedCaseInsensitiveContains(searchFilter) ||
-                $0.title.localizedCaseInsensitiveContains(searchFilter) ||
-                $0.category.localizedCaseInsensitiveContains(searchFilter)
+        estimator.tasks.filter { task in
+            let taskKey = task.frameworkKey.uppercased()
+            let scopeKey = activeFrameworkKey.uppercased()
+            
+            let matchesScope = taskKey.contains(scopeKey) || scopeKey.contains(taskKey)
+            
+            if searchText.isEmpty {
+                return matchesScope
+            } else {
+                return matchesScope && (
+                    task.id.localizedCaseInsensitiveContains(searchText) ||
+                    task.title.localizedCaseInsensitiveContains(searchText) ||
+                    (task.controlStatement?.localizedCaseInsensitiveContains(searchText) ?? false)
+                )
             }
         }
     }
     
-    var selectedControl: AuditTask {
-        if let found = frameworkTasks.first(where: { $0.id == selectedControlID }) {
-            return found
-        } else if let first = frameworkTasks.first {
-            return first
-        } else {
-            return AuditTask(id: "N/A", frameworkKey: "SOC2", title: "No Control Selected", category: "General", blurb: nil, discussion: nil, controlActivities: nil)
+    var selectedControl: AuditTask? {
+        if let id = selectedControlID {
+            return filteredControls.first(where: { $0.id == id })
         }
+        return filteredControls.first
     }
     
     var body: some View {
-        NavigationStack {
-            HStack(spacing: 0) {
-                // MARK: - Left Sidebar: Controls List
-                VStack(spacing: 0) {
+        NavigationSplitView {
+            // MARK: - Dedicated Scope Sidebar List
+            VStack(spacing: 0) {
+                // Scope Header Info
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(activeFrameworkKey) Audit Scope")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                            Text("Controls (\(filteredControls.count))")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                        }
+                        Spacer()
+                        if syncManager.isSyncing {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
+                    }
+                    
+                    // Search Bar
                     HStack {
                         Image(systemName: "magnifyingglass")
-                            .foregroundColor(TractColor.label)
-                        TextField("Filter controls...", text: $searchFilter)
+                            .foregroundColor(.secondary)
+                        TextField("Search \(activeFrameworkKey) controls...", text: $searchText)
                             .font(.subheadline)
-                            .foregroundColor(TractColor.ink)
                     }
-                    .padding(10)
-                    .background(TractColor.card)
-                    .cornerRadius(6)
-                    .padding(12)
-                    
-                    Divider().background(TractColor.stroke)
-                    
-                    List(filteredControls, id: \.id) { control in
-                        let log = activeWorkspace.controlLogs.first(where: { $0.taskID == control.id })
-                        let statusText = log?.status ?? "NOT EVALUATED"
-                        
+                    .padding(8)
+                    .background(Color.primary.opacity(0.05))
+                    .cornerRadius(8)
+                }
+                .padding()
+                
+                Divider()
+                
+                // Controls List
+                List(filteredControls, id: \.id) { control in
+                    Button(action: {
+                        selectedControlID = control.id
+                        loadWorkpaperState(for: control.id)
+                    }) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(control.id)
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                    .foregroundColor(control.id == selectedControl.id ? TractColor.copper : TractColor.ink)
-                                
-                                Text("\(control.category): \(control.title)")
-                                    .font(.caption2)
-                                    .foregroundColor(TractColor.secondary)
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.secondary)
+                                Text(cleanTitle(for: control))
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
                                     .lineLimit(1)
                             }
-                            
                             Spacer()
-                            
-                            Text(statusText.uppercased())
-                                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            let status = getLogStatus(for: control.id)
+                            Text(status)
+                                .font(.caption2)
+                                .fontWeight(.bold)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(statusColor(statusText).opacity(0.15))
-                                .foregroundColor(statusColor(statusText))
+                                .padding(.vertical, 2)
+                                .background(statusColor(status).opacity(0.15))
+                                .foregroundColor(statusColor(status))
                                 .cornerRadius(4)
                         }
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            saveCurrentControlState()
-                            selectedControlID = control.id
-                            loadStateForSelectedControl()
-                        }
-                        .listRowBackground(control.id == selectedControl.id ? TractColor.card : Color.clear)
                     }
-                    .listStyle(.plain)
                 }
-                .frame(width: 320)
-                .background(TractColor.canvas)
-                
-                Divider().background(TractColor.stroke)
-                
-                // MARK: - Right Detail Panel
+                .listStyle(.plain)
+            }
+            .navigationTitle(activeFrameworkKey)
+            .navigationBarTitleDisplayMode(.inline)
+        } detail: {
+            // MARK: - Detail Workpaper View
+            if let control = selectedControl {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 24) {
+                        
                         // Header
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(currentFramework.name)
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(TractColor.copper)
+                            Text("\(control.frameworkKey) • \(control.category)")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.accentColor)
                             
-                            Text("\(selectedControl.id): \(selectedControl.title)")
+                            Text("\(control.id): \(cleanTitle(for: control))")
                                 .font(.title2)
-                                .bold()
-                                .foregroundColor(TractColor.ink)
+                                .fontWeight(.bold)
                         }
                         
-                        // Status Picker
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("EVALUATION STATUS")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(TractColor.label)
-                            
-                            HStack(spacing: 8) {
-                                statusButton("Not Evaluated", status: "NOT EVALUATED")
-                                statusButton("In Progress", status: "IN PROGRESS")
-                                statusButton("Compliant", status: "COMPLIANT")
-                                statusButton("Not Compliant", status: "NOT COMPLIANT")
+                        Divider()
+                        
+                        // 1. Control Statement Box
+                        if let statement = control.controlStatement ?? control.blurb, !statement.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Control Statement")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                Text(statement)
+                                    .font(.body)
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.primary.opacity(0.04))
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                                    )
                             }
                         }
                         
-                        // Control Guidance & Discussion Section
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("CONTROL GUIDANCE & DISCUSSION")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(TractColor.copper)
-                            
-                            Text(selectedControl.discussion ?? selectedControl.blurb ?? "The entity demonstrates commitment to integrity, security, and operational standards under AICPA Trust Services Criteria.")
-                                .font(.subheadline)
-                                .foregroundColor(TractColor.ink)
+                        // 2. Official Discussion / Guidance
+                        if let discussion = control.discussion, !discussion.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Discussion")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                Text(discussion)
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                            }
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(TractColor.card)
-                        .cornerRadius(8)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(TractColor.stroke, lineWidth: 1))
                         
-                        // Recommended Testing Activities Section
+                        // 3. Related To Cross-Reference Chips
+                        if let related = control.relatedControls, !related.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Related To")
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 8) {
+                                        ForEach(related, id: \.self) { item in
+                                            Button(action: { searchText = item }) {
+                                                Text(item)
+                                                    .font(.caption)
+                                                    .fontWeight(.semibold)
+                                                    .foregroundColor(.accentColor)
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .background(Color.accentColor.opacity(0.12))
+                                                    .cornerRadius(6)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 4. Repositioned Evaluation Status (Below Related To)
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("RECOMMENDED TESTING ACTIVITIES")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(TractColor.copper)
-                            
-                            Text(selectedControl.controlActivities ?? "1. Inspect operational policy documentation and management approval records.\n2. Verify system audit logging and annual compliance reviews.")
+                            Text("EVALUATION STATUS")
                                 .font(.caption)
-                                .foregroundColor(TractColor.ink)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
+                            
+                            HStack(spacing: 8) {
+                                ForEach(["Not Evaluated", "In Progress", "Compliant", "Not Compliant"], id: \.self) { st in
+                                    Button(action: {
+                                        currentStatus = st
+                                        saveWorkpaperState(for: control.id)
+                                    }) {
+                                        Text(st)
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 8)
+                                            .background(currentStatus == st ? statusColor(st) : Color.primary.opacity(0.06))
+                                            .foregroundColor(currentStatus == st ? .white : .primary)
+                                            .cornerRadius(6)
+                                    }
+                                }
+                            }
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(TractColor.card)
-                        .cornerRadius(8)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(TractColor.stroke, lineWidth: 1))
                         
-                        // Auditor Workpaper Notes Text Editor
+                        Divider()
+                        
+                        // 5. Restored Auditor Notes Section
                         VStack(alignment: .leading, spacing: 8) {
                             Text("AUDITOR WORKPAPER NOTES")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                .foregroundColor(TractColor.label)
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.secondary)
                             
                             TextEditor(text: $currentNotes)
-                                .font(.body)
-                                .frame(height: 120)
+                                .frame(minHeight: 120)
                                 .padding(8)
-                                .scrollContentBackground(.hidden)
-                                .background(TractColor.card)
-                                .cornerRadius(8)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(TractColor.stroke, lineWidth: 1))
+                                .background(Color.primary.opacity(0.02))
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                                .onChange(of: currentNotes) { _, _ in
+                                    saveWorkpaperState(for: control.id)
+                                }
+                        }
+                        
+                        // 6. Restored Evidence Locker Section
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("ATTACHED EVIDENCE LOCKER")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Button(action: { showingAddEvidenceSheet = true }) {
+                                    Label("Attach Evidence", systemImage: "paperclip")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            
+                            if evidenceItems.isEmpty {
+                                Text("No evidence items attached to this control standard yet.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(.vertical, 8)
+                            } else {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(evidenceItems, id: \.self) { item in
+                                        HStack {
+                                            Image(systemName: "doc.text.fill")
+                                                .foregroundColor(.accentColor)
+                                            Text(item)
+                                                .font(.subheadline)
+                                            Spacer()
+                                            Button(action: { removeEvidence(item, for: control.id) }) {
+                                                Image(systemName: "trash")
+                                                    .font(.caption)
+                                                    .foregroundColor(.red.opacity(0.8))
+                                            }
+                                        }
+                                        .padding(10)
+                                        .background(Color.primary.opacity(0.04))
+                                        .cornerRadius(6)
+                                    }
+                                }
+                            }
                         }
                     }
-                    .padding(24)
+                    .padding()
                 }
-                .background(TractColor.canvas)
-            }
-            .navigationTitle("Assessment Workpaper")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") {
-                        saveCurrentControlState()
-                        isPresented = false
-                    }
-                    .foregroundColor(TractColor.copper)
+                .onAppear {
+                    loadWorkpaperState(for: control.id)
                 }
+                .onChange(of: selectedControlID) { _, newID in
+                    if let newID = newID { loadWorkpaperState(for: newID) }
+                }
+            } else {
+                Text("Select a control from the sidebar to begin evaluation.")
+                    .foregroundColor(.secondary)
             }
         }
-        .preferredColorScheme(.dark)
-        .onAppear {
-            selectedFrameworkKey = initialFrameworkKey
-            if let firstControl = frameworkTasks.first {
-                selectedControlID = firstControl.id
+        .sheet(isPresented: $showingAddEvidenceSheet) {
+            NavigationStack {
+                Form {
+                    Section("Evidence Artifact") {
+                        TextField("Document or Asset Title", text: $newEvidenceName)
+                    }
+                }
+                .navigationTitle("Attach Evidence")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingAddEvidenceSheet = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Add") {
+                            if let control = selectedControl, !newEvidenceName.isEmpty {
+                                evidenceItems.append(newEvidenceName)
+                                saveWorkpaperState(for: control.id)
+                                newEvidenceName = ""
+                                showingAddEvidenceSheet = false
+                            }
+                        }
+                    }
+                }
             }
-            loadStateForSelectedControl()
+            .presentationDetents([.height(200)])
         }
     }
     
-    private func statusButton(_ label: String, status: String) -> some View {
-        let isSelected = currentStatus.lowercased() == status.lowercased()
-        return Button(action: {
-            currentStatus = status
-            saveCurrentControlState()
-        }) {
-            Text(label)
-                .font(.caption2)
-                .bold()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(isSelected ? statusColor(status) : TractColor.card)
-                .foregroundColor(isSelected ? .black : TractColor.ink)
-                .cornerRadius(6)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(TractColor.stroke, lineWidth: 1))
-        }
+    // MARK: - State & Helpers
+    private func cleanTitle(for control: AuditTask) -> String {
+        control.title.replacingOccurrences(of: "\(control.id): ", with: "")
     }
     
     private func statusColor(_ status: String) -> Color {
-        switch status.lowercased() {
-        case "compliant": return .green
-        case "in progress": return .orange
-        case "not compliant": return .red
-        default: return TractColor.secondary
+        switch status {
+        case "Compliant": return .green
+        case "In Progress": return .orange
+        case "Not Compliant": return .red
+        default: return .secondary
         }
     }
     
-    private func loadStateForSelectedControl() {
-        if let log = activeWorkspace.controlLogs.first(where: { $0.taskID == selectedControl.id }) {
-            currentStatus = log.status
-            currentNotes = log.notes
-        } else {
-            currentStatus = "NOT EVALUATED"
-            currentNotes = ""
-        }
+    private func getLogStatus(for id: String) -> String {
+        let dict = (try? JSONDecoder().decode([String: String].self, from: savedStatusesData)) ?? [:]
+        return dict[id] ?? "Not Evaluated"
     }
     
-    private func saveCurrentControlState() {
-        guard !selectedControl.id.isEmpty && selectedControl.id != "N/A" else { return }
+    private func loadWorkpaperState(for id: String) {
+        let statusDict = (try? JSONDecoder().decode([String: String].self, from: savedStatusesData)) ?? [:]
+        let notesDict = (try? JSONDecoder().decode([String: String].self, from: savedNotesData)) ?? [:]
+        let evidenceDict = (try? JSONDecoder().decode([String: [String]].self, from: savedEvidenceData)) ?? [:]
         
-        if let existingLog = activeWorkspace.controlLogs.first(where: { $0.taskID == selectedControl.id }) {
-            existingLog.status = currentStatus
-            existingLog.notes = currentNotes
-        } else if currentStatus != "NOT EVALUATED" || !currentNotes.isEmpty {
-            let newLog = ControlLog(
-                        frameworkKey: selectedFrameworkKey,
-                        controlTitle: selectedControl.title,
-                        taskID: selectedControl.id,
-                        status: currentStatus,
-                        notes: currentNotes)
-            activeWorkspace.controlLogs.append(newLog)
-        }
-        try? modelContext.save()
+        currentStatus = statusDict[id] ?? "Not Evaluated"
+        currentNotes = notesDict[id] ?? ""
+        evidenceItems = evidenceDict[id] ?? []
+    }
+    
+    private func saveWorkpaperState(for id: String) {
+        var statusDict = (try? JSONDecoder().decode([String: String].self, from: savedStatusesData)) ?? [:]
+        var notesDict = (try? JSONDecoder().decode([String: String].self, from: savedNotesData)) ?? [:]
+        var evidenceDict = (try? JSONDecoder().decode([String: [String]].self, from: savedEvidenceData)) ?? [:]
+        
+        statusDict[id] = currentStatus
+        notesDict[id] = currentNotes
+        evidenceDict[id] = evidenceItems
+        
+        savedStatusesData = (try? JSONEncoder().encode(statusDict)) ?? savedStatusesData
+        savedNotesData = (try? JSONEncoder().encode(notesDict)) ?? savedNotesData
+        savedEvidenceData = (try? JSONEncoder().encode(evidenceDict)) ?? savedEvidenceData
+    }
+    
+    private func removeEvidence(_ item: String, for id: String) {
+        evidenceItems.removeAll(where: { $0 == item })
+        saveWorkpaperState(for: id)
     }
 }
+
