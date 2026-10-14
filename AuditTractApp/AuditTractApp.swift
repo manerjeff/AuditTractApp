@@ -2,28 +2,25 @@ import SwiftUI
 import SwiftData
 
 @main
-struct MyApp: App {
+struct AuditTractApp: App {
+    @StateObject private var estimator = AuditEstimator()
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
+                .environmentObject(estimator)
         }
-        .modelContainer(for: [UserWorkspace.self, ControlLog.self, EvidenceItem.self])
+        // Attach Full SQLite Model Container
+        .modelContainer(for: [
+            Employee.self,
+            Location.self,
+            AssetItem.self,
+            Assessment.self,
+            ControlEvaluation.self,
+            EvidenceArtifact.self,
+            ScanExecution.self,
+            VulnerabilityFinding.self,
+            SecurityNewsArticle.self
+        ])
     }
-    @main
-    struct AuditTractApp: App {
-        @StateObject private var syncManager = ControlSyncManager.shared
-
-        var body: some Scene {
-            WindowGroup {
-                ContentView()
-                    .task {
-                        // Triggers silent background check without blocking UI launch
-                        await syncManager.checkForUpdates()
-                    }
-            }
-        }
-    }
-
 }
-
-
