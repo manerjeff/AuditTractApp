@@ -50,6 +50,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "AuditTractApp" */;
 			buildPhases = (
+				ADEC76CE307F094B00F896FE /* ShellScript */,
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
 				000000000000000140000000 /* Resources */,
@@ -106,6 +107,77 @@
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		ADEC76CE307F094B00F896FE /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			inputPaths = (
+				"$(SRCROOT)/NIST_SP_800_53.xlsx",
+			);
+			outputPaths = (
+				"$(SRCROOT)/AuditTractApp/controls.json",
+			);
+			shellPath = /bin/sh;
+			shellScript = (
+				"export PATH=\"/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"",
+				"",
+				"# Auto-detect Python executable",
+				"PYTHON_BIN=$(which python3 || echo \"/usr/bin/python3\")",
+				"",
+				"EXCEL_FILE=\"${SRCROOT}/NIST_SP_800_53.xlsx\"",
+				"OUTPUT_JSON=\"${SRCROOT}/AuditTractApp/\"Services & Pipeline\"/controls.json\"",
+				"",
+				"if [ -f \"$EXCEL_FILE\" ]; then",
+				"    echo \"Converting $EXCEL_FILE to $OUTPUT_JSON...\"",
+				"    \"$PYTHON_BIN\" -c \"",
+				"import sys, json",
+				"",
+				"try:",
+				"    import pandas as pd",
+				"    excel_path = '$EXCEL_FILE'",
+				"    output_path = '$OUTPUT_JSON'",
+				"",
+				"    df = pd.read_excel(excel_path)",
+				"    df_c = df[df['Control (or Control Enhancement) Identifier'].notna()].copy()",
+				"    df_c['Control Family'] = df_c['Control Family'].ffill()",
+				"",
+				"    json_output = []",
+				"    for _, r in df_c.iterrows():",
+				"        rel = [x.strip() for x in str(r['Related Controls']).split(',') if x.strip() and str(x) != 'nan'] if pd.notna(r['Related Controls']) else []",
+				"        json_output.append({",
+				"            'id': f\\\"NIST-{str(r['Control (or Control Enhancement) Identifier']).strip()}\\\",",
+				"            'frameworkKey': 'NIST',",
+				"            'title': str(r['Control (or Control Enhancement) Name']).title(),",
+				"            'category': str(r['Control Family']),",
+				"            'controlStatement': str(r['Control Statement']) if pd.notna(r['Control Statement']) else '',",
+				"            'discussion': str(r['Discussion']) if pd.notna(r['Discussion']) else '',",
+				"            'relatedControls': rel",
+				"        })",
+				"",
+				"    envelope = {",
+				"        'version': '2026.10.13.1',",
+				"        'updatedAt': '2026-10-13T21:00:00Z',",
+				"        'controls': json_output",
+				"    }",
+				"",
+				"    with open(output_path, 'w') as f:",
+				"        json.dump(envelope, f, indent=2)",
+				"",
+				"    print(f'Successfully compiled {len(json_output)} controls into envelope controls.json')",
+				"except Exception as e:",
+				"    print(f'Warning in Build Phase script: {e}', file=sys.stderr)",
+				"\"",
+				"else",
+				"    echo \"Warning: $EXCEL_FILE not found in SRCROOT. Skipping auto-conversion.\"",
+				"fi",
+				"",
+				"# Always exit 0 so Xcode compilation proceeds smoothly",
+				"exit 0",
+				"",
+				"",
+			);
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		000000000000000120000000 /* Sources */ = {
@@ -251,14 +323,32 @@
 		000000000000000111000000 /* Debug configuration for PBXNativeTarget "AuditTractApp" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 575K26XZQE;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_MOVIES_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_MUSIC_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_PICTURE_FOLDER = readwrite;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = AuditTractApp;
+				INFOPLIST_KEY_CFBundleDisplayName = AuditTract;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -275,7 +365,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.audittract.audittract;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -284,7 +374,6 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "MyApp/MyApp-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -295,14 +384,32 @@
 		000000000000000112000000 /* Release configuration for PBXNativeTarget "AuditTractApp" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 575K26XZQE;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_MOVIES_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_MUSIC_FOLDER = readwrite;
+				ENABLE_FILE_ACCESS_PICTURE_FOLDER = readwrite;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
+				ENABLE_RESOURCE_ACCESS_CAMERA = YES;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PRINTING = YES;
+				ENABLE_RESOURCE_ACCESS_USB = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = AuditTractApp;
+				INFOPLIST_KEY_CFBundleDisplayName = AuditTract;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -319,7 +426,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.audittract.audittract;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -328,7 +435,6 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "MyApp/MyApp-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";

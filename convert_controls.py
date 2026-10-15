@@ -53,4 +53,6 @@ def convert_excel_to_json(excel_path, output_json_path):
     print(f"🎉 Successfully compiled {len(controls)} controls into {output_json_path}")
 
 if __name__ == "__main__":
-    convert_excel_to_json("NIST_SP_800_53.xlsx", "controls.json")
+    # Change "controls.json" to write directly inside the Services & Pipeline directory
+    convert_excel_to_json("NIST_SP_800_53.xlsx", "AuditTractApp/Services & Pipeline/controls.json")
+

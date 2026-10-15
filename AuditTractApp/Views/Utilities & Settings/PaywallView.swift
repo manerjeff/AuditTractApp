@@ -1,3 +1,10 @@
+//
+//  PaywallView.swift
+//  AuditTractApp
+//
+//  Created by Jeff Maner on 10/14/26.
+//
+
 import SwiftUI
 
 struct PaywallView: View {
