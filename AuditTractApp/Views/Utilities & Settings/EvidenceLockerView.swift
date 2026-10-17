@@ -7,13 +7,14 @@
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct EvidenceLockerView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \EvidenceArtifact.addedDate, order: .reverse) private var artifacts: [EvidenceArtifact]
     
     @State private var searchText = ""
-    @State private var showingAddSheet = false
+    @State private var showingFileImporter = false
     
     init() {}
     
@@ -81,9 +82,29 @@ struct EvidenceLockerView: View {
             .navigationTitle("Evidence Locker")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: { showingAddSheet = true }) {
+                    Button(action: { showingFileImporter = true }) {
                         Label("Add Artifact", systemImage: "plus")
                     }
+                }
+            }
+            .fileImporter(
+                isPresented: $showingFileImporter,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let file = urls.first {
+                        let artifact = EvidenceArtifact(
+                            title: file.lastPathComponent,
+                            filePath: file.path,
+                            fileType: file.pathExtension.uppercased()
+                        )
+                        modelContext.insert(artifact)
+                        try? modelContext.save()
+                    }
+                case .failure(let error):
+                    print("❌ Error importing artifact: \(error.localizedDescription)")
                 }
             }
         }

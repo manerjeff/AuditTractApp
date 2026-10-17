@@ -25,43 +25,38 @@ final class ControlSyncManager: ObservableObject {
     
     func loadActiveControls() {
         print("🔍 ControlSyncManager: Attempting to load controls...")
+        var loadedTasks: [AuditTask] = []
         
-        // 1. Check App Bundle
+        // 1. Read controls from Bundle if available
         if let bundleURL = Bundle.main.url(forResource: "controls", withExtension: "json") ?? Bundle.main.url(forResource: "controls.json", withExtension: nil) {
-            print("✅ Found controls.json at URL: \(bundleURL)")
-            do {
-                let data = try Data(contentsOf: bundleURL)
+            if let data = try? Data(contentsOf: bundleURL) {
                 let decoder = JSONDecoder()
-                
-                // Attempt decoding Envelope
                 if let envelope = try? decoder.decode(ControlsEnvelope.self, from: data) {
-                    self.tasks = envelope.controls
-                    print("🎉 SUCCESS: Loaded \(self.tasks.count) controls from ControlsEnvelope!")
-                    return
+                    loadedTasks = envelope.controls
+                } else if let rawTasks = try? decoder.decode([AuditTask].self, from: data) {
+                    loadedTasks = rawTasks
                 }
-                
-                // Attempt decoding Raw Array
-                if let rawTasks = try? decoder.decode([AuditTask].self, from: data) {
-                    self.tasks = rawTasks
-                    print("🎉 SUCCESS: Loaded \(self.tasks.count) controls from raw [AuditTask] array!")
-                    return
-                }
-                
-                print("❌ DECODING ERROR: controls.json was found, but JSONDecoder failed to match AuditTask schema.")
-            } catch {
-                print("❌ READ ERROR: Could not read data from controls.json: \(error)")
             }
-        } else {
-            print("❌ FILE NOT FOUND: controls.json is missing from Bundle.main.")
         }
+        
+        // 2. Read local fallback tasks (SOC2, NIST, ISO 27001) from TaskBuilders
+        let fallbacks = AuditEstimator().buildAllFallbackTasks()
+        
+        // 3. Merge both lists without duplicates
+        var combined = loadedTasks
+        for fallback in fallbacks {
+            if !combined.contains(where: { $0.id == fallback.id }) {
+                combined.append(fallback)
+            }
+        }
+        
+        self.tasks = combined
+        print("🎉 SUCCESS: Total controls active in memory: \(self.tasks.count)")
     }
 
     @MainActor
     func checkForUpdates() async {
-        guard let url = remoteURL else { 
-            print("ControlSyncManager: Remote URL disabled. Using local bundle controls (147 items).")
-            return
-        }
+        guard let url = remoteURL else { return }
         
         isSyncing = true
         defer { isSyncing = false }

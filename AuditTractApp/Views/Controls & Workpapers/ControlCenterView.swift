@@ -20,12 +20,14 @@ struct ControlCenterView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var evaluations: [ControlEvaluation]
     
-    @StateObject private var syncManager = ControlSyncManager()
+    @ObservedObject private var syncManager = ControlSyncManager.shared
     @State private var selectedFrameworkKey: String? = nil
     
     let availableFrameworks: [FrameworkItem] = [
         FrameworkItem(id: "NIST_800_53", title: "NIST SP 800-53", subtitle: "Security and Privacy Controls for Information Systems", icon: "shield.checkerboard", color: .blue),
+        FrameworkItem(id: "FEDRAMP_CMMC", title: "FedRAMP / CMMC 2.0", subtitle: "Federal Cloud & Defense Industrial Base Safeguards (NIST 800-171)", icon: "flag.fill", color: .red),
         FrameworkItem(id: "SOC_2", title: "SOC 2 Type II", subtitle: "Trust Services Criteria (Security, Availability, Confidentiality)", icon: "checkmark.seal.fill", color: .indigo),
+        FrameworkItem(id: "SOC_1", title: "SOC 1 Type II", subtitle: "SSAE 18 Internal Controls over Financial Reporting (ICFR)", icon: "dollarsign.circle.fill", color: .green),
         FrameworkItem(id: "ISO_27001", title: "ISO/IEC 27001", subtitle: "Information Security Management System Standards", icon: "globe.americas.fill", color: .purple),
         FrameworkItem(id: "HIPAA", title: "HIPAA Security Rule", subtitle: "PHI Administrative, Physical & Technical Safeguards", icon: "cross.case.fill", color: .teal)
     ]
@@ -34,7 +36,7 @@ struct ControlCenterView: View {
         NavigationStack {
             mainContent
                 .navigationTitle(selectedFrameworkKey == nil ? "Compliance Frameworks" : "Controls")
-                .task {
+                .onAppear {
                     if syncManager.tasks.isEmpty {
                         syncManager.loadActiveControls()
                     }
@@ -103,15 +105,29 @@ struct FrameworkSelectionGrid: View {
     
     @ViewBuilder
     private func frameworkCard(_ fw: FrameworkItem) -> some View {
+        let target = fw.id.uppercased()
+        
         let fwTasks = tasks.filter { task in
-            if fw.id == "NIST_800_53" {
-                return task.frameworkKey.isEmpty || task.frameworkKey.contains("NIST")
+            let taskFw = task.frameworkKey.uppercased()
+            let taskId = task.id.uppercased()
+            
+            if target == "SOC_1" || target == "SOC1" {
+                return taskFw == "SOC_1" || taskFw == "SOC1" || taskId.hasPrefix("SOC1")
+            } else if target == "SOC_2" || target == "SOC2" {
+                return taskFw == "SOC_2" || taskFw == "SOC2" || taskId.hasPrefix("SOC2")
+            } else if target.contains("NIST") {
+                return taskFw.contains("NIST") || taskId.hasPrefix("NIST") || taskFw.isEmpty
+            } else if target.contains("ISO") {
+                return taskFw.contains("ISO") || taskId.hasPrefix("ISO")
+            } else if target.contains("HIPAA") {
+                return taskFw.contains("HIPAA") || taskId.hasPrefix("HIPAA")
             } else {
-                return task.frameworkKey.localizedCaseInsensitiveContains(fw.id)
+                return taskFw.contains(target)
             }
         }
-        let totalCount = fw.id == "NIST_800_53" ? (fwTasks.isEmpty ? tasks.count : fwTasks.count) : fwTasks.count
-        let isInScope = (fw.id == "NIST_800_53") || evaluations.contains { $0.frameworkKey == fw.id }
+        
+        let totalCount = fwTasks.count
+        let isInScope = evaluations.contains { $0.frameworkKey == fw.id } || (fw.id == "NIST_800_53")
         
         Button(action: { onSelect(fw.id) }) {
             VStack(alignment: .leading, spacing: 14) {
@@ -175,20 +191,34 @@ struct ControlListView: View {
     @State private var searchText = ""
     
     var filteredTasks: [AuditTask] {
+        let target = frameworkKey.uppercased()
+        
         let fwFiltered = allTasks.filter { task in
-            if frameworkKey == "NIST_800_53" {
-                return task.frameworkKey.isEmpty || task.frameworkKey.contains("NIST")
-            } else {
-                return task.frameworkKey.localizedCaseInsensitiveContains(frameworkKey)
+            let taskFw = task.frameworkKey.uppercased()
+            let taskId = task.id.uppercased()
+            
+            if target == "SOC_1" || target == "SOC1" {
+                return taskFw == "SOC_1" || taskFw == "SOC1" || taskId.hasPrefix("SOC1")
+            } else if target == "SOC_2" || target == "SOC2" {
+                return taskFw == "SOC_2" || taskFw == "SOC2" || taskId.hasPrefix("SOC2")
+            } else if target.contains("NIST") {
+                return taskFw.contains("NIST") || taskId.hasPrefix("NIST") || taskFw.isEmpty
+            } else if target.contains("ISO") {
+                return taskFw.contains("ISO") || taskId.hasPrefix("ISO")
+            } else if target.contains("HIPAA") {
+                return taskFw.contains("HIPAA") || taskId.hasPrefix("HIPAA")
+            } else if target.contains("FEDRAMP") || target.contains("CMMC") {
+                return taskFw.contains("FEDRAMP") || taskFw.contains("CMMC") || taskId.hasPrefix("CMMC") || taskId.hasPrefix("FED")
+            }
+            else {
+                return taskFw.contains(target)
             }
         }
         
-        let listToSearch = frameworkKey == "NIST_800_53" && fwFiltered.isEmpty ? allTasks : fwFiltered
-        
         if searchText.isEmpty {
-            return listToSearch
+            return fwFiltered
         } else {
-            return listToSearch.filter {
+            return fwFiltered.filter {
                 $0.id.localizedCaseInsensitiveContains(searchText) ||
                 $0.title.localizedCaseInsensitiveContains(searchText) ||
                 $0.category.localizedCaseInsensitiveContains(searchText)
@@ -210,8 +240,8 @@ struct ControlListView: View {
                     Text("No Controls for \(frameworkTitle)")
                         .font(.headline)
                         .foregroundColor(.secondary)
-                    Text("Import control definitions for this framework.")
-                        .font(.subheadline)
+                    Text("Total tasks loaded in memory: \(allTasks.count)")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -276,12 +306,14 @@ struct ControlListView: View {
         .padding(.vertical, 4)
     }
     
+    // Inside frameworkTitle helper in ControlListView
     private var frameworkTitle: String {
-        switch frameworkKey {
-        case "SOC_2": return "SOC 2 Type II"
-        case "ISO_27001": return "ISO 27001"
-        case "HIPAA": return "HIPAA Security Rule"
-        default: return "NIST SP 800-53"
-        }
+        let target = frameworkKey.uppercased()
+        if target.contains("FEDRAMP") || target.contains("CMMC") { return "FedRAMP / CMMC 2.0" }
+        if target.contains("SOC_1") || target == "SOC1" { return "SOC 1 Type II" }
+        if target.contains("SOC_2") || target == "SOC2" { return "SOC 2 Type II" }
+        if target.contains("ISO") { return "ISO 27001" }
+        if target.contains("HIPAA") { return "HIPAA Security Rule" }
+        return "NIST SP 800-53"
     }
 }

@@ -2,9 +2,12 @@
 // ControlDetailView.swift
 // AuditTractApp
 //
+// Created by: Jeff Maner 10/14/2026
+//
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct ControlDetailView: View {
     let task: AuditTask
@@ -16,12 +19,12 @@ struct ControlDetailView: View {
     @State private var evidenceLocation: String = ""
     @State private var lastSavedTime: String = ""
     @State private var showSavedToast = false
+    @State private var showingFileImporter = false
     
     var currentEvaluation: ControlEvaluation? {
         evaluations.first { $0.controlID == task.id }
     }
     
-    // Dynamically derives required evidence checklist items from explicit fields or requirement statement
     var dynamicEvidenceRequirements: [String] {
         if let explicitObjects = task.examinationObjects, !explicitObjects.isEmpty {
             return explicitObjects
@@ -96,27 +99,7 @@ struct ControlDetailView: View {
                 }
             }
             
-            // MARK: - 4. RELATED CONTROLS
-            if let related = task.relatedControls, !related.isEmpty {
-                Section("Related Controls") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(related, id: \.self) { item in
-                                Text(item)
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(Color.primary.opacity(0.08))
-                                    .foregroundColor(.secondary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-            }
-            // MARK: - 5. REQUIRED EVIDENCE CHECKLIST
+            // MARK: - 4. REQUIRED EVIDENCE CHECKLIST
             Section("Required Evidence Checklist") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Curate and verify the following artifacts prior to final auditor submission:")
@@ -139,33 +122,28 @@ struct ControlDetailView: View {
                 .padding(.vertical, 4)
             }
             
-            
-            // MARK: - 6. EVIDENCE MANIFEST & METADATA
-            Section(
-                header: Text("Evidence Manifest & File References"),
-                footer: Text("Enter file names, local path references, or cloud storage links (e.g. S3 / SharePoint) for the physical evidence package.")
-            ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "folder.badge.gearshape")
-                            .foregroundColor(.blue)
-                        Text("Evidence File / Location Reference")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
+            // MARK: - 5. RELATED CONTROLS
+            if let related = task.relatedControls, !related.isEmpty {
+                Section("Related Controls") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(related, id: \.self) { item in
+                                Text(item)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.primary.opacity(0.08))
+                                    .foregroundColor(.secondary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            }
+                        }
+                        .padding(.vertical, 2)
                     }
-                    
-                    TextField("e.g. /AuditVault/2026/AC-02/User_Access_Review_Q3.pdf", text: $evidenceLocation)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
-                        .onChange(of: evidenceLocation) { _, _ in autoSave() }
                 }
-                .padding(.vertical, 4)
             }
             
-           
-            
-            // MARK: - 7. COMPLIANCE STATUS
+            // MARK: - 6. COMPLIANCE STATUS
             Section("Compliance Status") {
                 Picker("Status", selection: $status) {
                     Text("Not Evaluated").tag("Not Evaluated")
@@ -179,6 +157,37 @@ struct ControlDetailView: View {
                 .onChange(of: status) { _, _ in autoSave() }
             }
             
+            // MARK: - 7. EVIDENCE MANIFEST & FILE REFERENCES
+            Section(
+                header: Text("Evidence Manifest & File References"),
+                footer: Text("Enter file names, local path references, or tap the folder icon to attach a file from your device.")
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Button(action: { showingFileImporter = true }) {
+                            Image(systemName: "folder.badge.gearshape")
+                                .font(.title3)
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.borderless)
+                        
+                        Text("Evidence File / Location Reference")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack {
+                        TextField("e.g. /AuditVault/2026/AC-02/User_Access_Review_Q3.pdf", text: $evidenceLocation)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.subheadline)
+                            .onChange(of: evidenceLocation) { _, _ in autoSave() }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            
+           
             // MARK: - 8. CLIENT WORKING NOTES
             Section(
                 header: Text("Client Working Notes"),
@@ -188,7 +197,9 @@ struct ControlDetailView: View {
                     .frame(minHeight: 110)
                     .onChange(of: auditorNotes) { _, _ in autoSave() }
             }
-          
+            
+           
+           
             // MARK: - 9. AUTO-SAVE ACTION & TIMESTAMP BAR
             Section {
                 Button(action: { autoSave(explicitTrigger: true) }) {
@@ -213,6 +224,21 @@ struct ControlDetailView: View {
         }
         .navigationTitle(task.id)
         .navigationBarTitleDisplayMode(.inline)
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let selectedURL = urls.first {
+                    self.evidenceLocation = selectedURL.lastPathComponent
+                    autoSave()
+                }
+            case .failure(let error):
+                print("❌ File selection error: \(error.localizedDescription)")
+            }
+        }
         .onAppear {
             if let existing = currentEvaluation {
                 self.status = existing.status
@@ -274,3 +300,4 @@ struct ControlDetailView: View {
         }
     }
 }
+
