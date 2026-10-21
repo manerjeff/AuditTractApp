@@ -98,6 +98,10 @@ struct ExportReportView: View {
 }
 
 // MARK: - UIKit Activity View Sheet Wrapper with iPad Popover Support
+#if canImport(UIKit)
+import UIKit
+
+// MARK: - UIKit Activity View Sheet Wrapper with iPad Popover Support
 struct ShareSheetView: UIViewControllerRepresentable {
     var activityItems: [Any]
     
@@ -107,7 +111,6 @@ struct ShareSheetView: UIViewControllerRepresentable {
             applicationActivities: nil
         )
         
-        // Required for iPadOS: Configures popover anchor point so the share sheet renders correctly
         if let popover = controller.popoverPresentationController {
             popover.permittedArrowDirections = .any
             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -127,3 +130,4 @@ struct ShareSheetView: UIViewControllerRepresentable {
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+#endif
