@@ -1,3 +1,4 @@
+// === File: ./Views/Controls & Workpapers/ControlCenterView.swift ===
 //
 //  ControlCenterView.swift
 //  AuditTractApp
@@ -22,11 +23,22 @@ struct ControlCenterView: View {
     
     @ObservedObject private var syncManager = ControlSyncManager.shared
     @State private var selectedFrameworkKey: String? = nil
+    @State private var showingPolicyVault = false
     
     let availableFrameworks: [FrameworkItem] = [
         FrameworkItem(id: "NIST_800_53", title: "NIST SP 800-53", subtitle: "Security and Privacy Controls for Information Systems", icon: "shield.checkerboard", color: .blue),
         FrameworkItem(id: "FEDRAMP_CMMC", title: "FedRAMP / CMMC 2.0", subtitle: "Federal Cloud & Defense Industrial Base Safeguards (NIST 800-171)", icon: "flag.fill", color: .red),
+        FrameworkItem(id: "HITRUST", title: "HITRUST CSF v11", subtitle: "Healthcare & Enterprise Common Security Framework", icon: "cross.vial.fill", color: .yellow),
+        FrameworkItem(id: "FISMA", title: "FISMA / NIST RMF", subtitle: "Federal Information Security Modernization Act & Risk Management Framework", icon: "building.2.fill", color: .indigo),
+        FrameworkItem(id: "PCI_DSS", title: "PCI DSS v4.0", subtitle: "Payment Card Industry Data Security Standards for Payment Processing", icon: "creditcard.fill", color: .green),
+        FrameworkItem(id: "SOX_ITGC", title: "SOX Section 404", subtitle: "Sarbanes-Oxley IT General Controls (ITGC) for Financial Systems", icon: "briefcase.fill", color: .yellow),
+        FrameworkItem(id: "CJIS", title: "CJIS Security Policy", subtitle: "FBI Criminal Justice Information Services Security Standards", icon: "shield.checkered", color: .brown),
+        FrameworkItem(id: "AWS_SECURITY", title: "AWS Security Standards", subtitle: "AWS Foundational Security Best Practices & Well-Architected Security Pillar", icon: "cloud.fill", color: .orange),
+        FrameworkItem(id: "FERPA", title: "FERPA Privacy & Security", subtitle: "Family Educational Rights & Privacy Act (34 CFR Part 99) Safeguards", icon: "graduationcap.fill", color: .pink),
+        FrameworkItem(id: "GDPR_PRIVACY", title: "GDPR / CCPA Privacy", subtitle: "EU Data Protection Regulation & California Consumer Privacy Act Safeguards", icon: "hand.raised.slash.fill", color: .blue),
         FrameworkItem(id: "SOC_2", title: "SOC 2 Type II", subtitle: "Trust Services Criteria (Security, Availability, Confidentiality)", icon: "checkmark.seal.fill", color: .indigo),
+        FrameworkItem(id: "SSAE_18", title: "SSAE 18 Attestations", subtitle: "AICPA Attestation Standard for Service Organization Control (SOC) Audits", icon: "doc.text.fill", color: .teal),
+        FrameworkItem(id: "SOC_3", title: "SOC 3 General Use", subtitle: "AICPA Trust Services Public Report Framework", icon: "doc.plaintext.fill", color: .cyan),
         FrameworkItem(id: "SOC_1", title: "SOC 1 Type II", subtitle: "SSAE 18 Internal Controls over Financial Reporting (ICFR)", icon: "dollarsign.circle.fill", color: .green),
         FrameworkItem(id: "ISO_27001", title: "ISO/IEC 27001", subtitle: "Information Security Management System Standards", icon: "globe.americas.fill", color: .purple),
         FrameworkItem(id: "HIPAA", title: "HIPAA Security Rule", subtitle: "PHI Administrative, Physical & Technical Safeguards", icon: "cross.case.fill", color: .teal)
@@ -36,6 +48,18 @@ struct ControlCenterView: View {
         NavigationStack {
             mainContent
                 .navigationTitle(selectedFrameworkKey == nil ? "Compliance Frameworks" : "Controls")
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(action: { showingPolicyVault = true }) {
+                            Label("Policy Library", systemImage: "doc.text.fill")
+                                .foregroundStyle(.yellow)
+                        }
+                        .tint(.yellow)
+                    }
+                }
+                .sheet(isPresented: $showingPolicyVault) {
+                    PolicyVaultView()
+                }
                 .onAppear {
                     if syncManager.tasks.isEmpty {
                         syncManager.loadActiveControls()
@@ -63,6 +87,104 @@ struct ControlCenterView: View {
     }
 }
 
+// MARK: - Global Compliance Posture Gauge Header
+struct ComplianceSummaryHeaderView: View {
+    let metrics: AuditEstimator.FrameworkProgressMetrics
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("OVERALL COMPLIANCE POSTURE")
+                        .font(.caption2)
+                        .fontWeight(.black)
+                        .foregroundColor(.secondary)
+                    
+                    Text("\(Int(metrics.completionPercentage))%")
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                        .foregroundColor(progressColor(metrics.completionPercentage))
+                }
+                
+                Spacer()
+                
+                // Ring Progress Gauge
+                ZStack {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.15), lineWidth: 10)
+                    Circle()
+                        .trim(from: 0.0, to: CGFloat(metrics.completionPercentage / 100.0))
+                        .stroke(
+                            progressColor(metrics.completionPercentage),
+                            style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeInOut, value: metrics.completionPercentage)
+                    
+                    Image(systemName: "shield.checkmark.fill")
+                        .font(.title2)
+                        .foregroundColor(progressColor(metrics.completionPercentage))
+                }
+                .frame(width: 64, height: 64)
+            }
+            
+            // Progress Bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.secondary.opacity(0.15))
+                        .frame(height: 8)
+                    
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(progressColor(metrics.completionPercentage))
+                        .frame(width: max(0, geo.size.width * CGFloat(metrics.completionPercentage / 100.0)), height: 8)
+                }
+            }
+            .frame(height: 8)
+            
+            Divider()
+            
+            // Sub-metrics Grid
+            HStack(spacing: 12) {
+                metricTile(title: "Compliant", count: metrics.compliantCount, icon: "checkmark.circle.fill", color: .green)
+                metricTile(title: "In Progress", count: metrics.inProgressCount, icon: "clock.fill", color: .orange)
+                metricTile(title: "Non-Compliant", count: metrics.nonCompliantCount, icon: "exclamationmark.triangle.fill", color: .red)
+                metricTile(title: "Active Frameworks", count: metrics.scopedFrameworksCount, icon: "square.stack.3d.up.fill", color: .accentColor)
+            }
+        }
+        .padding()
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 4)
+        .padding(.horizontal)
+    }
+    
+    @ViewBuilder
+    private func metricTile(title: String, count: Int, icon: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+            }
+            Text("\(count)")
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    
+    private func progressColor(_ percentage: Double) -> Color {
+        if percentage >= 80 { return .green }
+        if percentage >= 50 { return .orange }
+        return .accentColor
+    }
+}
+
 // MARK: - Level 1: Framework Selection Grid Screen
 struct FrameworkSelectionGrid: View {
     let frameworks: [FrameworkItem]
@@ -75,6 +197,15 @@ struct FrameworkSelectionGrid: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                let metrics = AuditEstimator.calculateGlobalMetrics(
+                    tasks: tasks,
+                    evaluations: evaluations,
+                    frameworks: frameworks
+                )
+                
+                ComplianceSummaryHeaderView(metrics: metrics)
+                    .padding(.top)
+                
                 headerView
                 
                 LazyVGrid(columns: columns, spacing: 16) {
@@ -100,7 +231,6 @@ struct FrameworkSelectionGrid: View {
                 .fontWeight(.bold)
         }
         .padding(.horizontal)
-        .padding(.top)
     }
     
     @ViewBuilder
@@ -111,7 +241,27 @@ struct FrameworkSelectionGrid: View {
             let taskFw = task.frameworkKey.uppercased()
             let taskId = task.id.uppercased()
             
-            if target == "SOC_1" || target == "SOC1" {
+            if target.contains("GDPR") {
+                return taskFw.contains("GDPR") || taskId.hasPrefix("GDPR")
+            } else if target.contains("HITRUST") {
+                return taskFw.contains("HITRUST") || taskId.hasPrefix("HITRUST")
+            } else if target.contains("FISMA") {
+                return taskFw.contains("FISMA") || taskId.hasPrefix("FISMA")
+            } else if target.contains("SSAE") {
+                return taskFw.contains("SSAE") || taskId.hasPrefix("SSAE")
+            } else if target.contains("SOX") {
+                return taskFw.contains("SOX") || taskId.hasPrefix("SOX")
+            } else if target.contains("PCI") {
+                return taskFw.contains("PCI") || taskId.hasPrefix("PCI")
+            } else if target.contains("CJIS") {
+                return taskFw.contains("CJIS") || taskId.hasPrefix("CJIS")
+            } else if target.contains("AWS") {
+                return taskFw.contains("AWS") || taskId.hasPrefix("AWS")
+            } else if target.contains("FERPA") {
+                return taskFw.contains("FERPA") || taskId.hasPrefix("FERPA")
+            } else if target == "SOC_3" || target == "SOC3" {
+                return taskFw == "SOC_3" || taskFw == "SOC3" || taskId.hasPrefix("SOC3")
+            } else if target == "SOC_1" || target == "SOC1" {
                 return taskFw == "SOC_1" || taskFw == "SOC1" || taskId.hasPrefix("SOC1")
             } else if target == "SOC_2" || target == "SOC2" {
                 return taskFw == "SOC_2" || taskFw == "SOC2" || taskId.hasPrefix("SOC2")
@@ -121,6 +271,8 @@ struct FrameworkSelectionGrid: View {
                 return taskFw.contains("ISO") || taskId.hasPrefix("ISO")
             } else if target.contains("HIPAA") {
                 return taskFw.contains("HIPAA") || taskId.hasPrefix("HIPAA")
+            } else if target.contains("FEDRAMP") || target.contains("CMMC") {
+                return taskFw.contains("FEDRAMP") || taskFw.contains("CMMC") || taskId.hasPrefix("CMMC") || taskId.hasPrefix("FED")
             } else {
                 return taskFw.contains(target)
             }
@@ -197,7 +349,27 @@ struct ControlListView: View {
             let taskFw = task.frameworkKey.uppercased()
             let taskId = task.id.uppercased()
             
-            if target == "SOC_1" || target == "SOC1" {
+            if target.contains("GDPR") {
+                return taskFw.contains("GDPR") || taskId.hasPrefix("GDPR")
+            } else if target.contains("HITRUST") {
+                return taskFw.contains("HITRUST") || taskId.hasPrefix("HITRUST")
+            } else if target.contains("FISMA") {
+                return taskFw.contains("FISMA") || taskId.hasPrefix("FISMA")
+            } else if target.contains("SSAE") {
+                return taskFw.contains("SSAE") || taskId.hasPrefix("SSAE")
+            } else if target.contains("SOX") {
+                return taskFw.contains("SOX") || taskId.hasPrefix("SOX")
+            } else if target.contains("PCI") {
+                return taskFw.contains("PCI") || taskId.hasPrefix("PCI")
+            } else if target.contains("CJIS") {
+                return taskFw.contains("CJIS") || taskId.hasPrefix("CJIS")
+            } else if target.contains("AWS") {
+                return taskFw.contains("AWS") || taskId.hasPrefix("AWS")
+            } else if target.contains("FERPA") {
+                return taskFw.contains("FERPA") || taskId.hasPrefix("FERPA")
+            } else if target == "SOC_3" || target == "SOC3" {
+                return taskFw == "SOC_3" || taskFw == "SOC3" || taskId.hasPrefix("SOC3")
+            } else if target == "SOC_1" || target == "SOC1" {
                 return taskFw == "SOC_1" || taskFw == "SOC1" || taskId.hasPrefix("SOC1")
             } else if target == "SOC_2" || target == "SOC2" {
                 return taskFw == "SOC_2" || taskFw == "SOC2" || taskId.hasPrefix("SOC2")
@@ -209,8 +381,7 @@ struct ControlListView: View {
                 return taskFw.contains("HIPAA") || taskId.hasPrefix("HIPAA")
             } else if target.contains("FEDRAMP") || target.contains("CMMC") {
                 return taskFw.contains("FEDRAMP") || taskFw.contains("CMMC") || taskId.hasPrefix("CMMC") || taskId.hasPrefix("FED")
-            }
-            else {
+            } else {
                 return taskFw.contains(target)
             }
         }
@@ -306,9 +477,18 @@ struct ControlListView: View {
         .padding(.vertical, 4)
     }
     
-    // Inside frameworkTitle helper in ControlListView
     private var frameworkTitle: String {
         let target = frameworkKey.uppercased()
+        if target.contains("GDPR") { return "GDPR / CCPA Data Privacy" }
+        if target.contains("HITRUST") { return "HITRUST CSF v11" }
+        if target.contains("FISMA") { return "FISMA / NIST RMF" }
+        if target.contains("SSAE") { return "SSAE 18 Attestations" }
+        if target.contains("SOX") { return "SOX Section 404 ITGC" }
+        if target.contains("PCI") { return "PCI DSS v4.0" }
+        if target.contains("CJIS") { return "CJIS Security Policy" }
+        if target.contains("AWS") { return "AWS Security Standards" }
+        if target.contains("FERPA") { return "FERPA Privacy & Security" }
+        if target == "SOC_3" || target == "SOC3" { return "SOC 3 General Use Report" }
         if target.contains("FEDRAMP") || target.contains("CMMC") { return "FedRAMP / CMMC 2.0" }
         if target.contains("SOC_1") || target == "SOC1" { return "SOC 1 Type II" }
         if target.contains("SOC_2") || target == "SOC2" { return "SOC 2 Type II" }
@@ -317,3 +497,121 @@ struct ControlListView: View {
         return "NIST SP 800-53"
     }
 }
+
+// MARK: - Unbranded Policy Vault & Preview Screen
+struct PolicyVaultView: View {
+    @Environment(\.dismiss) private var dismiss
+    let policies = AuditEstimator().buildDefaultPolicies()
+    @State private var searchText = ""
+    @State private var selectedPolicy: CompliancePolicy? = nil
+    
+    var filteredPolicies: [CompliancePolicy] {
+        if searchText.isEmpty { return policies }
+        return policies.filter {
+            $0.title.localizedCaseInsensitiveContains(searchText) ||
+            $0.category.localizedCaseInsensitiveContains(searchText) ||
+            $0.documentID.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            List(filteredPolicies) { policy in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(policy.documentID)
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundColor(.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        
+                        Text(policy.category)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                    }
+                    
+                    Text(policy.title)
+                        .font(.headline)
+                    
+                    HStack(spacing: 4) {
+                        ForEach(policy.frameworkMapping, id: \.self) { mapping in
+                            Text(mapping)
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selectedPolicy = policy
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search policies & standards...")
+            .navigationTitle("Client Policy Library")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .sheet(item: $selectedPolicy) { policy in
+                PolicyDetailSheet(policy: policy)
+            }
+        }
+    }
+}
+
+// MARK: - Policy Reader & Markdown Export Sheet
+struct PolicyDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let policy: CompliancePolicy
+    @State private var showShareSheet = false
+    @State private var exportedURL: URL?
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(policy.contentMarkdown)
+                        .font(.system(.body, design: .monospaced))
+                        .padding()
+                }
+            }
+            .navigationTitle(policy.documentID)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: exportPolicy) {
+                        Label("Export Template", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
+            .sheet(isPresented: $showShareSheet) {
+                if let url = exportedURL {
+                    ShareSheetView(activityItems: [url])
+                }
+            }
+        }
+    }
+    
+    private func exportPolicy() {
+        let fileName = "\(policy.documentID)_Template.md"
+        if let url = ReportExporter.shared.saveReportToDocuments(content: policy.contentMarkdown, fileName: fileName) {
+            self.exportedURL = url
+            self.showShareSheet = true
+        }
+    }
+}
+

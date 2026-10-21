@@ -26,6 +26,15 @@ struct Framework: Identifiable, Codable {
     }
 }
 
+struct CompliancePolicy: Identifiable, Codable {
+    let id: String
+    let title: String
+    let category: String
+    let frameworkMapping: [String]
+    let documentID: String
+    let contentMarkdown: String
+}
+
 // MARK: - Audit Task Model
 struct AuditTask: Identifiable, Codable {
     let id: String

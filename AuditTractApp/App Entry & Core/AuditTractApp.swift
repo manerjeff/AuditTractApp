@@ -17,7 +17,7 @@ struct AuditTractApp: App {
         .modelContainer(for: [
             ControlEvaluation.self,
             EvidenceArtifact.self,
-            AssetItem.self,
+            InventoryItem.self,
             Location.self,
             Employee.self
         ])

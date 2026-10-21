@@ -1,11 +1,3 @@
-//
-//  InventoryView 2.swift
-//  AuditTractApp
-//
-//  Created by Jeff Maner on 10/20/26.
-//
-
-
 // === File: ./Views/Inventory/InventoryView.swift ===
 //
 //  InventoryView.swift
@@ -23,6 +15,7 @@ struct InventoryView: View {
     
     @ObservedObject private var syncManager = ControlSyncManager.shared
     @State private var searchText = ""
+    @State private var selectedStatus: String = "Active" // Default view focuses on Active assets
     @State private var selectedClassification: String = "All"
     @State private var selectedItemForEdit: InventoryItem? = nil
     @State private var showingAddItemSheet = false
@@ -34,10 +27,10 @@ struct InventoryView: View {
                 item.assetType.localizedCaseInsensitiveContains(searchText) ||
                 item.owner.localizedCaseInsensitiveContains(searchText)
             
-            let matchesClassification = selectedClassification == "All" ||
-                item.classificationRaw == selectedClassification
+            let matchesStatus = selectedStatus == "All" || item.statusRaw == selectedStatus
+            let matchesClassification = selectedClassification == "All" || item.classificationRaw == selectedClassification
             
-            return matchesSearch && matchesClassification
+            return matchesSearch && matchesStatus && matchesClassification
         }
     }
     
@@ -47,8 +40,13 @@ struct InventoryView: View {
                 // Summary Metrics Bar
                 inventoryMetricsHeader
                 
-                // Classification Filter Chips
-                classificationFilterBar
+                // Filter Control Section
+                VStack(spacing: 8) {
+                    statusFilterBar
+                    classificationFilterBar
+                }
+                .padding(.vertical, 8)
+                .background(Color(UIColor.systemGroupedBackground))
                 
                 Divider()
                 
@@ -89,12 +87,18 @@ struct InventoryView: View {
     
     // MARK: - Header Metrics
     private var inventoryMetricsHeader: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             metricCard(
-                title: "Total Assets",
-                value: "\(inventoryItems.count)",
+                title: "Active Assets",
+                value: "\(inventoryItems.filter { $0.status == .active }.count)",
                 icon: "server.rack",
                 color: .blue
+            )
+            metricCard(
+                title: "Decommissioned",
+                value: "\(inventoryItems.filter { $0.status == .decommissioned || $0.status == .disposed }.count)",
+                icon: "archivebox.fill",
+                color: .secondary
             )
             metricCard(
                 title: "Encrypted",
@@ -118,26 +122,39 @@ struct InventoryView: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundColor(color)
-                    .font(.caption)
+                    .font(.caption2)
                 Text(title)
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
             Text(value)
-                .font(.title2)
+                .font(.headline)
                 .fontWeight(.bold)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        .padding(8)
         .background(Color(UIColor.tertiarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+    
+    // MARK: - Lifecycle Status Picker
+    private var statusFilterBar: some View {
+        Picker("Lifecycle Status", selection: $selectedStatus) {
+            Text("Active").tag("Active")
+            Text("Maintenance").tag("Maintenance / In Repair")
+            Text("Decommissioned").tag("Decommissioned")
+            Text("Disposed").tag("Disposed / Sanitized")
+            Text("All Lifecycle").tag("All")
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
     }
     
     // MARK: - Classification Filter Bar
     private var classificationFilterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                FilterChip(title: "All", isSelected: selectedClassification == "All") {
+                FilterChip(title: "All Tiers", isSelected: selectedClassification == "All") {
                     selectedClassification = "All"
                 }
                 
@@ -151,9 +168,7 @@ struct InventoryView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.vertical, 8)
         }
-        .background(Color(UIColor.systemGroupedBackground))
     }
     
     private var emptyInventoryView: some View {
@@ -163,7 +178,7 @@ struct InventoryView: View {
                 .foregroundColor(.secondary)
             Text("No Assets Found")
                 .font(.headline)
-            Text("Add an asset or adjust your classification filter.")
+            Text("Adjust status or data classification filters.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -187,26 +202,6 @@ struct InventoryView: View {
     }
 }
 
-// MARK: - Filter Chip View
-struct FilterChip: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption)
-                .fontWeight(isSelected ? .bold : .medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor : Color(UIColor.secondarySystemGroupedBackground))
-                .foregroundColor(isSelected ? .white : .primary)
-                .clipShape(Capsule())
-        }
-    }
-}
-
 // MARK: - Inventory Row View
 struct InventoryRowView: View {
     let item: InventoryItem
@@ -219,6 +214,17 @@ struct InventoryRowView: View {
                     Text(item.name)
                         .font(.headline)
                         .foregroundColor(.primary)
+                    
+                    if item.status != .active {
+                        Text(item.status.rawValue)
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .foregroundColor(.secondary)
+                            .clipShape(Capsule())
+                    }
                     
                     Spacer()
                     
@@ -243,7 +249,12 @@ struct InventoryRowView: View {
                     
                     Spacer()
                     
-                    if item.isEncrypted {
+                    if let certID = item.sanitizationCertificateID, !certID.isEmpty {
+                        Label(certID, systemImage: "doc.badge.checkmark")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.green)
+                    } else if item.isEncrypted {
                         Image(systemName: "lock.fill")
                             .font(.caption2)
                             .foregroundColor(.green)
@@ -301,23 +312,31 @@ struct AddEditInventorySheet: View {
     @State private var assetType: String = "AWS EC2"
     @State private var owner: String = ""
     @State private var ipAddressOrURL: String = ""
+    @State private var status: AssetStatus = .active
     @State private var classification: DataClassification = .internalData
     @State private var criticality: AssetCriticality = .tier2
     @State private var isEncrypted: Bool = true
     @State private var linkedControlsInput: String = ""
+    @State private var sanitizationCertificateID: String = ""
     @State private var notes: String = ""
     
     var body: some View {
         NavigationStack {
             Form {
-                Section("Asset Details") {
+                Section("Asset Identification") {
                     TextField("Asset Name (e.g. prod-db-01)", text: $name)
                     TextField("Asset Type (e.g. Database, S3 Bucket)", text: $assetType)
                     TextField("System Owner / Custodian", text: $owner)
                     TextField("IP Address or URL (Optional)", text: $ipAddressOrURL)
                 }
                 
-                Section("Scope & Data Classification") {
+                Section("Lifecycle Status & Scope") {
+                    Picker("Asset Status", selection: $status) {
+                        ForEach(AssetStatus.allCases, id: \.self) { st in
+                            Text(st.rawValue).tag(st)
+                        }
+                    }
+                    
                     Picker("Classification", selection: $classification) {
                         ForEach(DataClassification.allCases, id: \.self) { c in
                             Text(c.rawValue).tag(c)
@@ -333,12 +352,18 @@ struct AddEditInventorySheet: View {
                     Toggle("Encrypted at Rest / In Transit", isOn: $isEncrypted)
                 }
                 
+                if status == .decommissioned || status == .disposed {
+                    Section("Sanitization & Disposal Proof") {
+                        TextField("Sanitization Cert / Log ID (NIST 800-88)", text: $sanitizationCertificateID)
+                    }
+                }
+                
                 Section("Control Scope Binding") {
-                    TextField("Comma-separated Control IDs (e.g. PCI-REQ-03, SOC2-CC6.1)", text: $linkedControlsInput)
+                    TextField("Comma-separated Control IDs (e.g. PCI-REQ-03, ISO-A.7.14)", text: $linkedControlsInput)
                         .autocapitalization(.allCharacters)
                 }
                 
-                Section("Notes & Evidence Details") {
+                Section("Notes & Historical Audit Trail") {
                     TextEditor(text: $notes)
                         .frame(height: 80)
                 }
@@ -360,10 +385,12 @@ struct AddEditInventorySheet: View {
                     assetType = item.assetType
                     owner = item.owner
                     ipAddressOrURL = item.ipAddressOrURL ?? ""
+                    status = item.status
                     classification = item.classification
                     criticality = item.criticality
                     isEncrypted = item.isEncrypted
                     linkedControlsInput = item.linkedControlIDs.joined(separator: ", ")
+                    sanitizationCertificateID = item.sanitizationCertificateID ?? ""
                     notes = item.notes
                 }
             }
@@ -381,10 +408,15 @@ struct AddEditInventorySheet: View {
             item.assetType = assetType
             item.owner = owner
             item.ipAddressOrURL = ipAddressOrURL.isEmpty ? nil : ipAddressOrURL
+            item.status = status
             item.classification = classification
             item.criticality = criticality
             item.isEncrypted = isEncrypted
             item.linkedControlIDs = linkedIDs
+            item.sanitizationCertificateID = sanitizationCertificateID.isEmpty ? nil : sanitizationCertificateID
+            if status == .decommissioned || status == .disposed {
+                item.decommissionedDate = item.decommissionedDate ?? Date()
+            }
             item.notes = notes
         } else {
             let newItem = InventoryItem(
@@ -392,15 +424,39 @@ struct AddEditInventorySheet: View {
                 assetType: assetType,
                 owner: owner,
                 ipAddressOrURL: ipAddressOrURL.isEmpty ? nil : ipAddressOrURL,
+                status: status,
                 classification: classification,
                 criticality: criticality,
                 linkedControlIDs: linkedIDs,
                 isEncrypted: isEncrypted,
+                decommissionedDate: (status == .decommissioned || status == .disposed) ? Date() : nil,
+                sanitizationCertificateID: sanitizationCertificateID.isEmpty ? nil : sanitizationCertificateID,
                 notes: notes
             )
             modelContext.insert(newItem)
         }
         
         dismiss()
+    }
+}
+
+// MARK: - Filter Chip View
+struct FilterChip: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(isSelected ? .bold : .medium)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(isSelected ? Color.accentColor : Color(UIColor.secondarySystemGroupedBackground))
+                .foregroundColor(isSelected ? .white : .primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

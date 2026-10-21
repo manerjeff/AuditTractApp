@@ -1,11 +1,3 @@
-//
-//  InventoryItem.swift
-//  AuditTractApp
-//
-//  Created by Jeff Maner on 10/20/26.
-//
-
-
 // === File: ./Models (Data & Persistence)/InventoryItem.swift ===
 //
 //  InventoryItem.swift

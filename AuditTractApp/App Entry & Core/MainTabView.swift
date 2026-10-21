@@ -8,27 +8,34 @@
 import SwiftUI
 
 struct MainTabView: View {
+    @State private var selectedTab: String = "Controls"
+    
     var body: some View {
-        TabView {
-            ControlCenterView()
-                .tabItem {
-                    Label("Controls", systemImage: "shield.checkered")
-                }
+        VStack(spacing: 0) {
+            // Top Segmented Bar
+            Picker("Navigation", selection: $selectedTab) {
+                Text("Controls").tag("Controls")
+                Text("Inventory").tag("Inventory")
+                Text("Attack Surface").tag("Attack Surface")
+                Text("Intelligence").tag("Intelligence")
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            .background(Color(UIColor.systemGroupedBackground))
             
-            InventoryView()
-                .tabItem {
-                    Label("Inventory", systemImage: "server.rack")
-                }
-            
-            VulnerabilityView()
-                .tabItem {
-                    Label("Attack Surface", systemImage: "exclamationmark.shield")
-                }
-            
-            SecurityNewsView()
-                .tabItem {
-                    Label("Intelligence", systemImage: "newspaper")
-                }
+            // Tab Content Switcher
+            switch selectedTab {
+            case "Controls":
+                ControlCenterView()
+            case "Inventory":
+                InventoryView() // 👈 Plug in the new InventoryView here!
+            case "Attack Surface":
+                Text("Attack Surface View Placeholder")
+            case "Intelligence":
+                Text("Intelligence View Placeholder")
+            default:
+                ControlCenterView()
+            }
         }
     }
 }
