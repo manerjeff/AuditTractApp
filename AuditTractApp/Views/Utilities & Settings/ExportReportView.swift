@@ -101,7 +101,7 @@ struct ExportReportView: View {
 #if canImport(UIKit)
 import UIKit
 
-// MARK: - UIKit Activity View Sheet Wrapper with iPad Popover Support
+// MARK: - iOS / iPadOS UIKit Activity View Sheet
 struct ShareSheetView: UIViewControllerRepresentable {
     var activityItems: [Any]
     
@@ -129,5 +129,21 @@ struct ShareSheetView: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#else
+// MARK: - macOS Fallback View
+struct ShareSheetView: View {
+    var activityItems: [Any]
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Report Export Complete")
+                .font(.headline)
+            Text("File saved to Documents folder.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .padding(24)
+    }
 }
 #endif
