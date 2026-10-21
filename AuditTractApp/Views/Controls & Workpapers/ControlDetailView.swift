@@ -223,7 +223,10 @@ struct ControlDetailView: View {
             }
         }
         .navigationTitle(task.id)
-        .navigationBarTitleDisplayMode(.inline)
+#if os(iOS)
+.navigationBarTitleDisplayMode(.inline)
+#endif
+
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [.item],
