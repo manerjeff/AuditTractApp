@@ -21,8 +21,7 @@ struct MainTabView: View {
             }
             .pickerStyle(.segmented)
             .padding()
-            .background(Color(UIColor.systemGroupedBackground))
-            
+            .background(Color.primary.opacity(0.05))
             // Tab Content Switcher
             switch selectedTab {
             case "Controls":
