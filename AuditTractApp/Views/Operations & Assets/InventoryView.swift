@@ -360,7 +360,7 @@ struct AddEditInventorySheet: View {
                 
                 Section("Control Scope Binding") {
                     TextField("Comma-separated Control IDs (e.g. PCI-REQ-03, ISO-A.7.14)", text: $linkedControlsInput)
-                        .autocapitalization(.allCharacters)
+                        .textInputAutocapitalization(.characters)
                 }
                 
                 Section("Notes & Historical Audit Trail") {
