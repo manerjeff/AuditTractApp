@@ -1,4 +1,3 @@
-// === File: ./Views/Controls & Workpapers/ControlCenterView.swift ===
 //
 //  ControlCenterView.swift
 //  AuditTractApp
@@ -152,7 +151,7 @@ struct ComplianceSummaryHeaderView: View {
             }
         }
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: Color.black.opacity(0.04), radius: 8, x: 0, y: 4)
         .padding(.horizontal)
@@ -216,7 +215,7 @@ struct FrameworkSelectionGrid: View {
                 .padding(.horizontal)
             }
         }
-        .background(Color(UIColor.systemGroupedBackground))
+        .background(Color.primary.opacity(0.03))
     }
     
     private var headerView: some View {
@@ -326,7 +325,7 @@ struct FrameworkSelectionGrid: View {
                 }
             }
             .padding()
-            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .background(Color.secondary.opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 3)
         }
@@ -446,7 +445,7 @@ struct ControlListView: View {
             Text("Frameworks").opacity(0)
         }
         .padding()
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(Color.secondary.opacity(0.12))
     }
     
     @ViewBuilder
@@ -557,7 +556,9 @@ struct PolicyVaultView: View {
             }
             .searchable(text: $searchText, prompt: "Search policies & standards...")
             .navigationTitle("Client Policy Library")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -587,7 +588,9 @@ struct PolicyDetailSheet: View {
                 }
             }
             .navigationTitle(policy.documentID)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -614,4 +617,3 @@ struct PolicyDetailSheet: View {
         }
     }
 }
-

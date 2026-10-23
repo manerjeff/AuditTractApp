@@ -116,10 +116,10 @@ struct InventoryView: View {
                         }
                         .onDelete(perform: deleteItems)
                     }
-                    .listStyle(.insetGrouped)
+                    .listStyle(.plain)
                 }
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(Color.primary.opacity(0.03))
             .navigationTitle("Asset Inventory")
             .searchable(text: $searchText, prompt: "Search assets by name, type, owner...")
             .toolbar {
@@ -173,7 +173,7 @@ struct InventoryView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
     
@@ -199,10 +199,11 @@ struct InventoryView: View {
                 .fontWeight(isSelected ? .bold : .regular)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor : Color(uiColor: .secondarySystemGroupedBackground))
+                .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
                 .foregroundColor(isSelected ? .white : .primary)
                 .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
     }
     
     private func assetRow(for item: InventoryItem) -> some View {
@@ -367,7 +368,9 @@ struct AddInventoryItemSheet: View {
                 }
             }
             .navigationTitle("New Asset")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -517,7 +520,9 @@ struct InventoryItemDetailSheet: View {
                 }
             }
             .navigationTitle(item.name)
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(isEditing ? "Done" : "Close") {

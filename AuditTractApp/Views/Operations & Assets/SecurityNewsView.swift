@@ -38,12 +38,11 @@ struct SecurityNewsView: View {
                 }
                 .padding(.vertical, 6)
             }
-#if os(iOS)
-.listStyle(.insetGrouped)
-#else
-.listStyle(.sidebar)
-#endif
-
+            #if os(iOS)
+            .listStyle(.insetGrouped)
+            #else
+            .listStyle(.sidebar)
+            #endif
             .navigationTitle("Threat Intelligence & News")
             .onAppear {
                 seedInitialNewsIfEmpty()
