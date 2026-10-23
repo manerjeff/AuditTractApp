@@ -46,7 +46,9 @@ struct AuditSessionView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle("Audit Workspace")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
         }
     }
 }
