@@ -12,7 +12,7 @@ struct MainTabView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Top Segmented Bar
+            // Top Navigation Segmented Bar
             Picker("Navigation", selection: $selectedTab) {
                 Text("Controls").tag("Controls")
                 Text("Inventory").tag("Inventory")
@@ -20,21 +20,26 @@ struct MainTabView: View {
                 Text("Intelligence").tag("Intelligence")
             }
             .pickerStyle(.segmented)
-            .padding()
-            .background(Color.primary.opacity(0.05))
-            // Tab Content Switcher
-            switch selectedTab {
-            case "Controls":
-                ControlCenterView()
-            case "Inventory":
-                InventoryView() // 👈 Plug in the new InventoryView here!
-            case "Attack Surface":
-                Text("Attack Surface View Placeholder")
-            case "Intelligence":
-                Text("Intelligence View Placeholder")
-            default:
-                ControlCenterView()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.1))
+            
+            // Active Tab View Content
+            ZStack {
+                switch selectedTab {
+                case "Controls":
+                    ControlCenterView()
+                case "Inventory":
+                    InventoryView()
+                case "Attack Surface":
+                    VulnerabilityView()
+                case "Intelligence":
+                    SecurityNewsView()
+                default:
+                    ControlCenterView()
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

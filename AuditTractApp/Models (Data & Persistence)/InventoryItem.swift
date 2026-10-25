@@ -1,4 +1,3 @@
-// === File: ./Models (Data & Persistence)/InventoryItem.swift ===
 //
 //  InventoryItem.swift
 //  AuditTractApp
@@ -15,8 +14,11 @@ final class InventoryItem {
     @Attribute(.unique) var id: UUID
     var name: String
     var assetType: String              // e.g., "AWS EC2", "PostgreSQL DB", "MacBook Pro"
-    var owner: String                  // System Owner / Custodian
+    var owner: String                  // Fallback owner string or department name
     var ipAddressOrURL: String?
+    
+    // SwiftData Relational Link to Employee
+    @Relationship var assignedEmployee: Employee?
     
     // Lifecycle & Scope Properties
     var statusRaw: String              // Maps to AssetStatus
@@ -33,7 +35,8 @@ final class InventoryItem {
         id: UUID = UUID(),
         name: String,
         assetType: String,
-        owner: String,
+        owner: String = "",
+        assignedEmployee: Employee? = nil,
         ipAddressOrURL: String? = nil,
         status: AssetStatus = .active,
         classification: DataClassification = .internalData,
@@ -49,6 +52,7 @@ final class InventoryItem {
         self.name = name
         self.assetType = assetType
         self.owner = owner
+        self.assignedEmployee = assignedEmployee
         self.ipAddressOrURL = ipAddressOrURL
         self.statusRaw = status.rawValue
         self.classificationRaw = classification.rawValue
@@ -75,6 +79,14 @@ final class InventoryItem {
     var criticality: AssetCriticality {
         get { AssetCriticality(rawValue: criticalityRaw) ?? .tier2 }
         set { criticalityRaw = newValue.rawValue }
+    }
+    
+    // Display helper for owner name
+    var ownerDisplayName: String {
+        if let emp = assignedEmployee {
+            return emp.name
+        }
+        return owner.isEmpty ? "Unassigned" : owner
     }
 }
 

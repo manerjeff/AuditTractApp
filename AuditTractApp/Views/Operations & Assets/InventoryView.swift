@@ -64,7 +64,7 @@ struct InventoryView: View {
             let matchesSearch = searchText.isEmpty ||
                 item.name.localizedCaseInsensitiveContains(searchText) ||
                 item.assetType.localizedCaseInsensitiveContains(searchText) ||
-                item.owner.localizedCaseInsensitiveContains(searchText) ||
+                item.ownerDisplayName.localizedCaseInsensitiveContains(searchText) ||
                 (item.ipAddressOrURL?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 item.notes.localizedCaseInsensitiveContains(searchText)
             
@@ -235,7 +235,7 @@ struct InventoryView: View {
             }
             
             HStack(spacing: 8) {
-                Label(item.owner, systemImage: "person.fill")
+                Label(item.ownerDisplayName, systemImage: "person.fill")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 
@@ -311,10 +311,17 @@ struct InventoryView: View {
 struct AddInventoryItemSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Employee.name) private var employees: [Employee]
     
     @State private var name: String = ""
     @State private var assetType: String = "Server"
-    @State private var owner: String = ""
+    @State private var selectedEmployee: Employee? = nil
+    @State private var customOwner: String = ""
+    @State private var isCreatingNewEmployee: Bool = false
+    @State private var newEmployeeName: String = ""
+    @State private var newEmployeeRole: String = "Staff"
+    @State private var newEmployeeDepartment: String = "IT"
+    
     @State private var ipAddressOrURL: String = ""
     @State private var status: AssetStatus = .active
     @State private var classification: DataClassification = .internalData
@@ -335,8 +342,26 @@ struct AddInventoryItemSheet: View {
                             Text(type).tag(type)
                         }
                     }
-                    TextField("System Owner / Custodian", text: $owner)
                     TextField("IP Address or URL (Optional)", text: $ipAddressOrURL)
+                }
+                
+                Section("Assigned Employee / Custodian") {
+                    Picker("Assign Employee", selection: $selectedEmployee) {
+                        Text("None / Unassigned").tag(Employee?.none)
+                        ForEach(employees) { emp in
+                            Text("\(emp.name) (\(emp.department))").tag(Employee?.some(emp))
+                        }
+                    }
+                    
+                    Toggle("Create New Employee Record", isOn: $isCreatingNewEmployee)
+                    
+                    if isCreatingNewEmployee {
+                        TextField("Employee Full Name", text: $newEmployeeName)
+                        TextField("Role / Title", text: $newEmployeeRole)
+                        TextField("Department", text: $newEmployeeDepartment)
+                    } else if selectedEmployee == nil {
+                        TextField("Owner / Team Label (Fallback)", text: $customOwner)
+                    }
                 }
                 
                 Section("Governance & Classification") {
@@ -382,13 +407,25 @@ struct AddInventoryItemSheet: View {
                         saveItem()
                         dismiss()
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || owner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
     }
     
     private func saveItem() {
+        var finalEmployee: Employee? = selectedEmployee
+        
+        if isCreatingNewEmployee && !newEmployeeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let createdEmp = Employee(
+                name: newEmployeeName.trimmingCharacters(in: .whitespacesAndNewlines),
+                role: newEmployeeRole.trimmingCharacters(in: .whitespacesAndNewlines),
+                department: newEmployeeDepartment.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            modelContext.insert(createdEmp)
+            finalEmployee = createdEmp
+        }
+        
         let controls = linkedControlsInput
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -397,7 +434,8 @@ struct AddInventoryItemSheet: View {
         let newItem = InventoryItem(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             assetType: assetType,
-            owner: owner.trimmingCharacters(in: .whitespacesAndNewlines),
+            owner: customOwner.trimmingCharacters(in: .whitespacesAndNewlines),
+            assignedEmployee: finalEmployee,
             ipAddressOrURL: ipAddressOrURL.isEmpty ? nil : ipAddressOrURL.trimmingCharacters(in: .whitespacesAndNewlines),
             status: status,
             classification: classification,
@@ -417,6 +455,7 @@ struct AddInventoryItemSheet: View {
 struct InventoryItemDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Employee.name) private var allEmployees: [Employee]
     @Bindable var item: InventoryItem
     
     @State private var isEditing: Bool = false
@@ -443,15 +482,6 @@ struct InventoryItemDetailSheet: View {
                         }
                     }
                     
-                    LabeledContent("Owner") {
-                        if isEditing {
-                            TextField("Owner", text: $item.owner)
-                                .multilineTextAlignment(.trailing)
-                        } else {
-                            Text(item.owner)
-                        }
-                    }
-                    
                     LabeledContent("IP / Host") {
                         if isEditing {
                             TextField("IP or Host", text: Binding(
@@ -462,6 +492,29 @@ struct InventoryItemDetailSheet: View {
                         } else {
                             Text(item.ipAddressOrURL ?? "None")
                                 .foregroundColor(item.ipAddressOrURL == nil ? .secondary : .primary)
+                        }
+                    }
+                }
+                
+                Section("Assigned Employee / Custodian") {
+                    if isEditing {
+                        Picker("Assigned Employee", selection: $item.assignedEmployee) {
+                            Text("None / Unassigned").tag(Employee?.none)
+                            ForEach(allEmployees) { emp in
+                                Text("\(emp.name) (\(emp.department))").tag(Employee?.some(emp))
+                            }
+                        }
+                        
+                        if item.assignedEmployee == nil {
+                            TextField("Owner / Team Label (Fallback)", text: $item.owner)
+                        }
+                    } else {
+                        if let emp = item.assignedEmployee {
+                            LabeledContent("Assigned Person", value: emp.name)
+                            LabeledContent("Role", value: emp.role)
+                            LabeledContent("Department", value: emp.department)
+                        } else {
+                            LabeledContent("Owner / Team", value: item.owner.isEmpty ? "Unassigned" : item.owner)
                         }
                     }
                 }

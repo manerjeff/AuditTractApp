@@ -30,7 +30,7 @@ struct ControlCenterView: View {
         FrameworkItem(id: "HITRUST", title: "HITRUST CSF v11", subtitle: "Healthcare & Enterprise Common Security Framework", icon: "cross.vial.fill", color: .yellow),
         FrameworkItem(id: "FISMA", title: "FISMA / NIST RMF", subtitle: "Federal Information Security Modernization Act & Risk Management Framework", icon: "building.2.fill", color: .indigo),
         FrameworkItem(id: "PCI_DSS", title: "PCI DSS v4.0", subtitle: "Payment Card Industry Data Security Standards for Payment Processing", icon: "creditcard.fill", color: .green),
-        FrameworkItem(id: "SOX_ITGC", title: "SOX Section 404", subtitle: "Sarbanes-Oxley IT General Controls (ITGC) for Financial Systems", icon: "briefcase.fill", color: .yellow),
+        FrameworkItem(id: "SOX_ITGC", title: "SOX Section 404", subtitle: "Sarbanes-Oxley IT General Controls (ITGC) for Financial Systems", icon: "briefcase.fill", color: .blue),
         FrameworkItem(id: "CJIS", title: "CJIS Security Policy", subtitle: "FBI Criminal Justice Information Services Security Standards", icon: "shield.checkered", color: .brown),
         FrameworkItem(id: "AWS_SECURITY", title: "AWS Security Standards", subtitle: "AWS Foundational Security Best Practices & Well-Architected Security Pillar", icon: "cloud.fill", color: .orange),
         FrameworkItem(id: "FERPA", title: "FERPA Privacy & Security", subtitle: "Family Educational Rights & Privacy Act (34 CFR Part 99) Safeguards", icon: "graduationcap.fill", color: .pink),

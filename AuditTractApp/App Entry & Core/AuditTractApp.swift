@@ -19,8 +19,9 @@ struct AuditTractApp: App {
             EvidenceArtifact.self,
             InventoryItem.self,
             Location.self,
-            Employee.self
+            Employee.self,
+            ScanExecution.self,
+            VulnerabilityFinding.self
         ])
     }
 }
-
