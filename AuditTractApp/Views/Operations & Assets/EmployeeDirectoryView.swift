@@ -66,7 +66,13 @@ struct EmployeeDirectoryView: View {
                         }
                         .onDelete(perform: deleteEmployees)
                     }
+                    #if os(iOS)
                     .listStyle(.insetGrouped)
+                    #elseif os(macOS)
+                    .listStyle(.sidebar)
+                    #else
+                    .listStyle(.automatic)
+                    #endif
                     .searchable(text: $searchText, prompt: "Search by name, role, department...")
                 }
             }

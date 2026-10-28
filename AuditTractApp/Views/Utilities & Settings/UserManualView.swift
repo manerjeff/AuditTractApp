@@ -224,7 +224,15 @@ struct UserManualView: View {
                         }
                     }
                 }
+                
+                #if os(iOS)
                 .listStyle(.insetGrouped)
+                #elseif os(macOS)
+                .listStyle(.sidebar)
+                #else
+                .listStyle(.automatic)
+                #endif
+
             }
             .background(Color.primary.opacity(0.03))
             .navigationTitle("AuditTract Field Manual")
