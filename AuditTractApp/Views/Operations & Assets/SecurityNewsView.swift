@@ -191,31 +191,35 @@ struct SecurityNewsView: View {
 }
 
 // MARK: - In-App Safari Browser Presentation Wrapper
-#if canImport(SafariServices)
+#if canImport(SafariServices) && (os(iOS) || os(visionOS))
 import SafariServices
 
 struct SafariViewWrapper: UIViewControllerRepresentable {
     let url: URL
-    
+
     func makeUIViewController(context: Context) -> SFSafariViewController {
-        let safariVC = SFSafariViewController(url: url)
-        safariVC.dismissButtonStyle = .close
-        return safariVC
+        SFSafariViewController(url: url)
     }
-    
+
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }
-#else
-struct SafariViewWrapper: View {
+#elseif os(macOS)
+import WebKit
+
+struct SafariViewWrapper: NSViewRepresentable {
     let url: URL
-    var body: some View {
-        Link("Open in Default Browser", destination: url)
-            .padding()
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView()
+        webView.load(URLRequest(url: url))
+        return webView
     }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 #endif
 
-// Identifiable conformance on URL for sheet presentation
+// MARK: - Make URL Identifiable for .sheet(item:)
 extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }

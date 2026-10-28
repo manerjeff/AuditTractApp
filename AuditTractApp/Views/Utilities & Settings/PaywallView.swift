@@ -48,9 +48,33 @@ struct PaywallView: View {
                     VStack(spacing: 20) {
                         // Branding Header
                         VStack(spacing: 8) {
-                            Image(systemName: "shield.checkered")
-                                .font(.system(size: 46))
-                                .foregroundColor(TractColor.copper)
+                            Group {
+                                if let appIcon = UIImage(named: "AppIcon") ?? UIImage(named: "AppIcon60x60") {
+                                    Image(uiImage: appIcon)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                } else {
+                                    // Fallback: Custom branded compliance shield
+                                    Image(systemName: "shield.checkered")
+                                        .resizable()
+                                        .scaledToFit()
+                                        .foregroundStyle(
+                                            LinearGradient(
+                                                colors: [Color(hex: "E5A96A"), Color(hex: "B87333")],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                }
+                            }
+                            .frame(width: 60, height: 60)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .padding(.bottom, 4)
+
+                            //Image(systemName: "shield.checkered")
+                                //.font(.system(size: 46))
+                                //.foregroundColor(TractColor.copper)
                             
                             Text("AuditTract Pro")
                                 .font(.largeTitle)

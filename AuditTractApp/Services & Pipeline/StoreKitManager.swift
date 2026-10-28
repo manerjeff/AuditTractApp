@@ -79,7 +79,11 @@ final class StoreKitManager: ObservableObject {
         defer { purchaseInProgress = false }
         
         do {
+            #if os(visionOS)
+            let result = try await product.purchase(confirmIn: .current)
+            #else
             let result = try await product.purchase()
+            #endif
             
             switch result {
             case .success(let verification):
