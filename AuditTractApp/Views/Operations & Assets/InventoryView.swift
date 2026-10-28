@@ -8,288 +8,290 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - Asset Display Helpers
-
-extension AssetStatus {
-    var iconName: String {
-        switch self {
-        case .active: return "checkmark.circle.fill"
-        case .maintenance: return "wrench.and.screwdriver.fill"
-        case .decommissioned: return "archivebox.fill"
-        case .disposed: return "trash.fill"
-        }
-    }
-    
-    var color: Color {
-        switch self {
-        case .active: return .green
-        case .maintenance: return .orange
-        case .decommissioned: return .secondary
-        case .disposed: return .red
-        }
-    }
-}
-
-extension AssetCriticality {
-    var color: Color {
-        switch self {
-        case .tier1: return .red
-        case .tier2: return .orange
-        case .tier3: return .blue
-        }
-    }
-    
-    var shortName: String {
-        switch self {
-        case .tier1: return "Tier 1"
-        case .tier2: return "Tier 2"
-        case .tier3: return "Tier 3"
-        }
-    }
-}
-
-// MARK: - Main Inventory View
-
 struct InventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \InventoryItem.name) private var items: [InventoryItem]
     
     @State private var searchText: String = ""
-    @State private var filterStatus: AssetStatus? = nil
-    @State private var showingAddSheet: Bool = false
-    @State private var selectedItem: InventoryItem? = nil
+    @State private var selectedFilter: String = "All"
+    @State private var showingAddAssetSheet: Bool = false
+    @State private var showingEmployeeDirectory: Bool = false
+    @State private var selectedItemForDetail: InventoryItem? = nil
+    
+    let filterOptions = ["All", "Tier 1 Critical", "Confidential / PHI", "Unencrypted", "Decommissioned"]
     
     var filteredItems: [InventoryItem] {
         items.filter { item in
             let matchesSearch = searchText.isEmpty ||
                 item.name.localizedCaseInsensitiveContains(searchText) ||
                 item.assetType.localizedCaseInsensitiveContains(searchText) ||
-                item.ownerDisplayName.localizedCaseInsensitiveContains(searchText) ||
                 (item.ipAddressOrURL?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                item.notes.localizedCaseInsensitiveContains(searchText)
+                (item.ownerDisplayName.localizedCaseInsensitiveContains(searchText))
             
-            let matchesStatus = filterStatus == nil || item.status == filterStatus
-            return matchesSearch && matchesStatus
+            let matchesFilter: Bool
+            switch selectedFilter {
+            case "Tier 1 Critical":
+                matchesFilter = (item.criticality == .tier1)
+            case "Confidential / PHI":
+                matchesFilter = (item.classification == .confidential || item.classification == .phi || item.classification == .cardholderData)
+            case "Unencrypted":
+                matchesFilter = !item.isEncrypted
+            case "Decommissioned":
+                matchesFilter = (item.status == .decommissioned)
+            default:
+                matchesFilter = true
+            }
+            
+            return matchesSearch && matchesFilter
         }
     }
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Summary Stat Cards
-                summaryCards
-                    .padding(.horizontal)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
+                // Posture / Inventory Metrics Bar
+                inventoryMetricsHeader
                 
-                // Status Filter Chips
-                filterChips
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
+                // Filter Chips
+                filterChipsBar
                 
                 Divider()
                 
-                // Asset List / Content
-                if filteredItems.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Assets Found", systemImage: "server.rack")
-                    } description: {
-                        Text(items.isEmpty ? "Tap '+' to add your first asset to the inventory." : "No assets match your search or filter.")
-                    } actions: {
-                        if items.isEmpty {
-                            Button("Load Sample Inventory") {
-                                seedDefaultInventory()
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
+                // Asset List
+                if items.isEmpty {
+                    emptyInventoryPlaceholder
+                } else if filteredItems.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 40))
+                            .foregroundColor(.secondary)
+                        Text("No Assets Match '\(searchText)'")
+                            .font(.headline)
+                            .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     List {
                         ForEach(filteredItems) { item in
                             Button {
-                                selectedItem = item
+                                selectedItemForDetail = item
                             } label: {
-                                assetRow(for: item)
+                                assetRow(item)
                             }
                             .buttonStyle(.plain)
                         }
-                        .onDelete(perform: deleteItems)
+                        .onDelete(perform: deleteAssets)
                     }
                     .listStyle(.plain)
                 }
             }
-            .background(Color.primary.opacity(0.03))
             .navigationTitle("Asset Inventory")
-            .searchable(text: $searchText, prompt: "Search assets by name, type, owner...")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .searchable(text: $searchText, prompt: "Search assets, IPs, custodians...")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .primaryAction) {
                     Button {
-                        showingAddSheet = true
+                        showingEmployeeDirectory = true
                     } label: {
-                        Label("Add Asset", systemImage: "plus")
+                        Label("Employee Directory", systemImage: "person.2.fill")
+                            .font(.title3)
+                            .foregroundColor(.accentColor)
+                    }
+                    
+                    Button {
+                        showingAddAssetSheet = true
+                    } label: {
+                        Label("Add Asset", systemImage: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(.accentColor)
                     }
                 }
             }
-            .sheet(isPresented: $showingAddSheet) {
+            .sheet(isPresented: $showingEmployeeDirectory) {
+                EmployeeDirectoryView()
+            }
+            .sheet(isPresented: $showingAddAssetSheet) {
                 AddInventoryItemSheet()
             }
-            .sheet(item: $selectedItem) { item in
+            .sheet(item: $selectedItemForDetail) { item in
                 InventoryItemDetailSheet(item: item)
             }
-            .onAppear {
-                if items.isEmpty {
-                    seedDefaultInventory()
-                }
-            }
         }
     }
     
-    // MARK: - Subviews
-    
-    private var summaryCards: some View {
-        HStack(spacing: 10) {
-            statCard(title: "Total", count: items.count, icon: "server.rack", color: .accentColor)
-            statCard(title: "Active", count: items.filter { $0.status == .active }.count, icon: "checkmark.circle.fill", color: .green)
-            statCard(title: "Critical", count: items.filter { $0.criticality == .tier1 }.count, icon: "exclamationmark.triangle.fill", color: .red)
-            statCard(title: "Decommissioned", count: items.filter { $0.status == .decommissioned || $0.status == .disposed }.count, icon: "archivebox.fill", color: .secondary)
+    // MARK: - Inventory Summary Header
+    private var inventoryMetricsHeader: some View {
+        let total = items.count
+        let criticalCount = items.filter { $0.criticality == .tier1 }.count
+        let unencryptedCount = items.filter { !$0.isEncrypted }.count
+        let decommissionedCount = items.filter { $0.status == .decommissioned }.count
+        
+        return HStack(spacing: 12) {
+            headerMetricTile(title: "Total Assets", count: total, icon: "server.rack", color: .accentColor)
+            headerMetricTile(title: "Critical (Tier 1)", count: criticalCount, icon: "exclamationmark.shield.fill", color: .red)
+            headerMetricTile(title: "Unencrypted", count: unencryptedCount, icon: "lock.open.trianglebadge.exclamationmark.fill", color: .orange)
+            headerMetricTile(title: "Retired", count: decommissionedCount, icon: "archivebox.fill", color: .secondary)
         }
+        .padding()
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal)
+        .padding(.top, 10)
     }
     
-    private func statCard(title: String, count: Int, icon: String, color: Color) -> some View {
+    @ViewBuilder
+    private func headerMetricTile(title: String, count: Int, icon: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.caption2)
                     .foregroundColor(color)
-                Spacer()
-                Text("\(count)")
-                    .font(.headline)
-                    .fontWeight(.bold)
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
             }
-            Text(title)
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            Text("\(count)")
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(.primary)
         }
-        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
     
-    private var filterChips: some View {
+    // MARK: - Filter Chips
+    private var filterChipsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                filterChip(title: "All", isSelected: filterStatus == nil) {
-                    filterStatus = nil
-                }
-                ForEach(AssetStatus.allCases, id: \.self) { status in
-                    filterChip(title: status.rawValue, isSelected: filterStatus == status) {
-                        filterStatus = (filterStatus == status) ? nil : status
+                ForEach(filterOptions, id: \.self) { opt in
+                    Button {
+                        selectedFilter = opt
+                    } label: {
+                        Text(opt)
+                            .font(.caption)
+                            .fontWeight(selectedFilter == opt ? .bold : .medium)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(selectedFilter == opt ? Color.accentColor : Color.secondary.opacity(0.12))
+                            .foregroundColor(selectedFilter == opt ? .white : .primary)
+                            .clipShape(Capsule())
                     }
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
         }
     }
     
-    private func filterChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.caption)
-                .fontWeight(isSelected ? .bold : .regular)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
-                .foregroundColor(isSelected ? .white : .primary)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-    
-    private func assetRow(for item: InventoryItem) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
+    // MARK: - Asset Row
+    @ViewBuilder
+    private func assetRow(_ item: InventoryItem) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: iconForAssetType(item.assetType))
+                .font(.title2)
+                .foregroundColor(item.criticality == .tier1 ? .red : .accentColor)
+                .frame(width: 32, height: 32)
+            
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
                     Text(item.name)
                         .font(.headline)
                         .foregroundColor(.primary)
+                    
+                    if item.criticality == .tier1 {
+                        Text("TIER 1")
+                            .font(.system(size: 8, weight: .black))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.18))
+                            .foregroundColor(.red)
+                            .clipShape(Capsule())
+                    }
+                }
+                
+                HStack(spacing: 6) {
                     Text(item.assetType)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                }
-                Spacer()
-                
-                // Status badge
-                HStack(spacing: 4) {
-                    Image(systemName: item.status.iconName)
-                        .font(.caption2)
-                    Text(item.status.rawValue)
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(item.status.color.opacity(0.15))
-                .foregroundColor(item.status.color)
-                .clipShape(Capsule())
-            }
-            
-            HStack(spacing: 8) {
-                Label(item.ownerDisplayName, systemImage: "person.fill")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                
-                if let ip = item.ipAddressOrURL, !ip.isEmpty {
-                    Text("•")
-                        .foregroundColor(.secondary)
-                    Label(ip, systemImage: "network")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                if item.isEncrypted {
-                    Image(systemName: "lock.fill")
-                        .font(.caption2)
-                        .foregroundColor(.green)
-                }
-                
-                // Criticality badge
-                Text(item.criticality.shortName)
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(item.criticality.color.opacity(0.15))
-                    .foregroundColor(item.criticality.color)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            
-            if !item.linkedControlIDs.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(item.linkedControlIDs.prefix(3), id: \.self) { control in
-                        Text(control)
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                    }
-                    if item.linkedControlIDs.count > 3 {
-                        Text("+\(item.linkedControlIDs.count - 3)")
-                            .font(.system(size: 10, weight: .regular))
+                    
+                    if let ip = item.ipAddressOrURL, !ip.isEmpty {
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(ip)
+                            .font(.system(.caption, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
                 }
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "person.circle.fill")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text(item.ownerDisplayName)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 4) {
+                    Image(systemName: item.isEncrypted ? "lock.fill" : "lock.open.fill")
+                        .font(.caption2)
+                        .foregroundColor(item.isEncrypted ? .green : .orange)
+                    Text(item.isEncrypted ? "Encrypted" : "Plaintext")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(item.isEncrypted ? .green : .orange)
+                }
+                
+                Text(item.classification.rawValue)
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.12))
+                    .foregroundColor(.secondary)
+                    .clipShape(Capsule())
+            }
+            
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundColor(.secondary.opacity(0.5))
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
     
-    // MARK: - Actions
+    private var emptyInventoryPlaceholder: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 52))
+                .foregroundColor(.secondary)
+            
+            Text("No Assets Registered")
+                .font(.headline)
+            
+            Text("Scope systems, data stores, and cloud endpoints to map to compliance controls and scan diagnostics.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            
+            Button {
+                showingAddAssetSheet = true
+            } label: {
+                Label("Register First Asset", systemImage: "plus")
+                    .fontWeight(.semibold)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
     
-    private func deleteItems(at offsets: IndexSet) {
+    private func deleteAssets(at offsets: IndexSet) {
         for index in offsets {
             let item = filteredItems[index]
             modelContext.delete(item)
@@ -297,115 +299,103 @@ struct InventoryView: View {
         try? modelContext.save()
     }
     
-    private func seedDefaultInventory() {
-        guard items.isEmpty else { return }
-        for sample in InventoryItem.buildDefaultInventory() {
-            modelContext.insert(sample)
-        }
-        try? modelContext.save()
+    private func iconForAssetType(_ type: String) -> String {
+        let lower = type.lowercased()
+        if lower.contains("database") || lower.contains("sql") { return "cylinder.split.1x2.fill" }
+        if lower.contains("server") || lower.contains("host") { return "server.rack" }
+        if lower.contains("laptop") || lower.contains("macbook") { return "laptopcomputer" }
+        if lower.contains("cloud") || lower.contains("aws") { return "cloud.fill" }
+        if lower.contains("storage") || lower.contains("s3") { return "externaldrive.fill" }
+        return "desktopcomputer"
     }
 }
 
 // MARK: - Add Inventory Item Sheet
-
 struct AddInventoryItemSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Employee.name) private var employees: [Employee]
     
     @State private var name: String = ""
-    @State private var assetType: String = "Server"
-    @State private var selectedEmployee: Employee? = nil
-    @State private var customOwner: String = ""
-    @State private var isCreatingNewEmployee: Bool = false
-    @State private var newEmployeeName: String = ""
-    @State private var newEmployeeRole: String = "Staff"
-    @State private var newEmployeeDepartment: String = "IT"
-    
+    @State private var assetType: String = "Application Server (EC2/VM)"
     @State private var ipAddressOrURL: String = ""
-    @State private var status: AssetStatus = .active
+    @State private var isEncrypted: Bool = true
     @State private var classification: DataClassification = .internalData
     @State private var criticality: AssetCriticality = .tier2
-    @State private var isEncrypted: Bool = true
-    @State private var linkedControlsInput: String = ""
-    @State private var notes: String = ""
     
-    let commonAssetTypes = ["Server", "Database", "Cloud Resource", "Workstation", "Mobile Device", "Network Appliance", "SaaS Application", "Data Asset"]
+    // Custodian Selection
+    @State private var selectedEmployee: Employee? = nil
+    @State private var customOwnerName: String = ""
+    
+    let assetTypes = [
+        "Application Server (EC2/VM)",
+        "Relational Database (PostgreSQL/MySQL/RDS)",
+        "NoSQL Data Store (MongoDB/DynamoDB)",
+        "Object Storage (AWS S3/GCS/Azure Blob)",
+        "Auditor Workstation (macOS/Windows)",
+        "Mobile Device (iOS/iPadOS Fleet)",
+        "Network Router / Firewall / VPC Gateway"
+    ]
     
     var body: some View {
         NavigationStack {
             Form {
-                Section("Basic Information") {
-                    TextField("Asset Name", text: $name)
+                Section("Asset Details") {
+                    TextField("Asset Name (e.g., Core Production DB)", text: $name)
                     Picker("Asset Type", selection: $assetType) {
-                        ForEach(commonAssetTypes, id: \.self) { type in
+                        ForEach(assetTypes, id: \.self) { type in
                             Text(type).tag(type)
                         }
                     }
-                    TextField("IP Address or URL (Optional)", text: $ipAddressOrURL)
+                    TextField("IP Address or Endpoint Hostname (Optional)", text: $ipAddressOrURL)
+                        #if os(iOS)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        #endif
                 }
                 
-                Section("Assigned Employee / Custodian") {
-                    Picker("Assign Employee", selection: $selectedEmployee) {
-                        Text("None / Unassigned").tag(Employee?.none)
-                        ForEach(employees) { emp in
-                            Text("\(emp.name) (\(emp.department))").tag(Employee?.some(emp))
-                        }
-                    }
-                    
-                    Toggle("Create New Employee Record", isOn: $isCreatingNewEmployee)
-                    
-                    if isCreatingNewEmployee {
-                        TextField("Employee Full Name", text: $newEmployeeName)
-                        TextField("Role / Title", text: $newEmployeeRole)
-                        TextField("Department", text: $newEmployeeDepartment)
-                    } else if selectedEmployee == nil {
-                        TextField("Owner / Team Label (Fallback)", text: $customOwner)
-                    }
-                }
-                
-                Section("Governance & Classification") {
-                    Picker("Status", selection: $status) {
-                        ForEach(AssetStatus.allCases, id: \.self) { s in
-                            Text(s.rawValue).tag(s)
-                        }
-                    }
-                    Picker("Classification", selection: $classification) {
+                Section("Classification & Security") {
+                    Picker("Data Classification", selection: $classification) {
                         ForEach(DataClassification.allCases, id: \.self) { c in
                             Text(c.rawValue).tag(c)
                         }
                     }
-                    Picker("Criticality", selection: $criticality) {
-                        ForEach(AssetCriticality.allCases, id: \.self) { crit in
-                            Text(crit.rawValue).tag(crit)
+                    
+                    Picker("Criticality Tier", selection: $criticality) {
+                        ForEach(AssetCriticality.allCases, id: \.self) { tier in
+                            Text(tier.rawValue).tag(tier)
                         }
                     }
-                    Toggle("Encrypted at Rest / Transit", isOn: $isEncrypted)
+                    
+                    Toggle("Encrypted at Rest & Transit", isOn: $isEncrypted)
                 }
                 
-                Section("Compliance Mapping") {
-                    TextField("Linked Control IDs (comma-separated, e.g. PCI-REQ-03, SI-02)", text: $linkedControlsInput)
-                }
-                
-                Section("Notes") {
-                    TextEditor(text: $notes)
-                        .frame(minHeight: 80)
+                Section("Assigned Custodian") {
+                    if !employees.isEmpty {
+                        Picker("Select Personnel", selection: $selectedEmployee) {
+                            Text("Unassigned / General Team").tag(Employee?.none)
+                            ForEach(employees) { emp in
+                                Text("\(emp.name) (\(emp.role))").tag(Employee?.some(emp))
+                            }
+                        }
+                    }
+                    
+                    if selectedEmployee == nil {
+                        TextField("Or Manual Custodian / Team Label", text: $customOwnerName)
+                    }
                 }
             }
-            .navigationTitle("New Asset")
+            .navigationTitle("New Inventory Asset")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         saveItem()
-                        dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -414,161 +404,105 @@ struct AddInventoryItemSheet: View {
     }
     
     private func saveItem() {
-        var finalEmployee: Employee? = selectedEmployee
-        
-        if isCreatingNewEmployee && !newEmployeeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let createdEmp = Employee(
-                name: newEmployeeName.trimmingCharacters(in: .whitespacesAndNewlines),
-                role: newEmployeeRole.trimmingCharacters(in: .whitespacesAndNewlines),
-                department: newEmployeeDepartment.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            modelContext.insert(createdEmp)
-            finalEmployee = createdEmp
-        }
-        
-        let controls = linkedControlsInput
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanEndpoint = ipAddressOrURL.trimmingCharacters(in: .whitespacesAndNewlines)
         
         let newItem = InventoryItem(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: cleanName,
             assetType: assetType,
-            owner: customOwner.trimmingCharacters(in: .whitespacesAndNewlines),
-            assignedEmployee: finalEmployee,
-            ipAddressOrURL: ipAddressOrURL.isEmpty ? nil : ipAddressOrURL.trimmingCharacters(in: .whitespacesAndNewlines),
-            status: status,
+            owner: customOwnerName.isEmpty ? "IT & Security Ops" : customOwnerName,
+            assignedEmployee: selectedEmployee,
+            ipAddressOrURL: cleanEndpoint.isEmpty ? nil : cleanEndpoint,
+            status: .active,
             classification: classification,
             criticality: criticality,
-            linkedControlIDs: controls,
-            isEncrypted: isEncrypted,
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            isEncrypted: isEncrypted
         )
         
         modelContext.insert(newItem)
         try? modelContext.save()
+        dismiss()
     }
 }
 
-// MARK: - Inventory Item Detail Sheet
-
+// MARK: - Inventory Detail & Edit Sheet
 struct InventoryItemDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Employee.name) private var allEmployees: [Employee]
     @Bindable var item: InventoryItem
+    @Query(sort: \Employee.name) private var employees: [Employee]
     
     @State private var isEditing: Bool = false
     
     var body: some View {
         NavigationStack {
             Form {
-                Section("Asset Details") {
-                    LabeledContent("Name") {
-                        if isEditing {
-                            TextField("Name", text: $item.name)
-                                .multilineTextAlignment(.trailing)
-                        } else {
-                            Text(item.name)
-                        }
-                    }
-                    
-                    LabeledContent("Type") {
-                        if isEditing {
-                            TextField("Type", text: $item.assetType)
-                                .multilineTextAlignment(.trailing)
-                        } else {
-                            Text(item.assetType)
-                        }
-                    }
-                    
-                    LabeledContent("IP / Host") {
-                        if isEditing {
-                            TextField("IP or Host", text: Binding(
-                                get: { item.ipAddressOrURL ?? "" },
-                                set: { item.ipAddressOrURL = $0.isEmpty ? nil : $0 }
-                            ))
-                            .multilineTextAlignment(.trailing)
-                        } else {
-                            Text(item.ipAddressOrURL ?? "None")
-                                .foregroundColor(item.ipAddressOrURL == nil ? .secondary : .primary)
-                        }
+                Section("Asset Identification") {
+                    if isEditing {
+                        TextField("Name", text: $item.name)
+                        TextField("IP Address or Endpoint", text: Binding(
+                            get: { item.ipAddressOrURL ?? "" },
+                            set: { item.ipAddressOrURL = $0.isEmpty ? nil : $0 }
+                        ))
+                    } else {
+                        LabeledContent("Name", value: item.name)
+                        LabeledContent("Type", value: item.assetType)
+                        LabeledContent("Endpoint / Host", value: item.ipAddressOrURL ?? "None")
                     }
                 }
                 
-                Section("Assigned Employee / Custodian") {
+                Section("Security & Compliance Profile") {
                     if isEditing {
-                        Picker("Assigned Employee", selection: $item.assignedEmployee) {
-                            Text("None / Unassigned").tag(Employee?.none)
-                            ForEach(allEmployees) { emp in
+                        Toggle("Encrypted", isOn: $item.isEncrypted)
+                        Picker("Classification", selection: $item.classification) {
+                            ForEach(DataClassification.allCases, id: \.self) { c in
+                                Text(c.rawValue).tag(c)
+                            }
+                        }
+                        Picker("Criticality", selection: $item.criticality) {
+                            ForEach(AssetCriticality.allCases, id: \.self) { tier in
+                                Text(tier.rawValue).tag(tier)
+                            }
+                        }
+                        Picker("Status", selection: $item.status) {
+                            ForEach(AssetStatus.allCases, id: \.self) { s in
+                                Text(s.rawValue).tag(s)
+                            }
+                        }
+                    } else {
+                        LabeledContent("Encryption", value: item.isEncrypted ? "Protected" : "Unencrypted Plaintext")
+                        LabeledContent("Classification", value: item.classification.rawValue)
+                        LabeledContent("Criticality", value: item.criticality.rawValue)
+                        LabeledContent("Status", value: item.status.rawValue)
+                    }
+                }
+                
+                Section("Custodian & Personnel") {
+                    if isEditing {
+                        Picker("Custodian", selection: $item.assignedEmployee) {
+                            Text("Unassigned / Generic").tag(Employee?.none)
+                            ForEach(employees) { emp in
                                 Text("\(emp.name) (\(emp.department))").tag(Employee?.some(emp))
                             }
                         }
-                        
-                        if item.assignedEmployee == nil {
-                            TextField("Owner / Team Label (Fallback)", text: $item.owner)
-                        }
                     } else {
+                        LabeledContent("Assigned Custodian", value: item.ownerDisplayName)
                         if let emp = item.assignedEmployee {
-                            LabeledContent("Assigned Person", value: emp.name)
-                            LabeledContent("Role", value: emp.role)
-                            LabeledContent("Department", value: emp.department)
+                            LabeledContent("Role & Department", value: "\(emp.role) • \(emp.department)")
+                        }
+                    }
+                }
+                
+                if item.status == .decommissioned {
+                    Section("NIST 800-88 Sanitization Details") {
+                        if isEditing {
+                            TextField("Certificate / Evidence ID", text: Binding(
+                                get: { item.sanitizationCertificateID ?? "" },
+                                set: { item.sanitizationCertificateID = $0.isEmpty ? nil : $0 }
+                            ))
                         } else {
-                            LabeledContent("Owner / Team", value: item.owner.isEmpty ? "Unassigned" : item.owner)
+                            LabeledContent("Certificate ID", value: item.sanitizationCertificateID ?? "None Recorded")
                         }
-                    }
-                }
-                
-                Section("Security & Status") {
-                    Picker("Status", selection: $item.status) {
-                        ForEach(AssetStatus.allCases, id: \.self) { s in
-                            Text(s.rawValue).tag(s)
-                        }
-                    }
-                    .disabled(!isEditing)
-                    
-                    Picker("Classification", selection: $item.classification) {
-                        ForEach(DataClassification.allCases, id: \.self) { c in
-                            Text(c.rawValue).tag(c)
-                        }
-                    }
-                    .disabled(!isEditing)
-                    
-                    Picker("Criticality", selection: $item.criticality) {
-                        ForEach(AssetCriticality.allCases, id: \.self) { crit in
-                            Text(crit.rawValue).tag(crit)
-                        }
-                    }
-                    .disabled(!isEditing)
-                    
-                    Toggle("Encrypted", isOn: $item.isEncrypted)
-                        .disabled(!isEditing)
-                }
-                
-                if let certID = item.sanitizationCertificateID {
-                    Section("Sanitization & Decommission") {
-                        LabeledContent("Certificate ID", value: certID)
-                        if let date = item.decommissionedDate {
-                            LabeledContent("Decommissioned Date", value: date.formatted(date: .abbreviated, time: .omitted))
-                        }
-                    }
-                }
-                
-                if !item.linkedControlIDs.isEmpty {
-                    Section("Linked Audit Controls") {
-                        ForEach(item.linkedControlIDs, id: \.self) { control in
-                            Label(control, systemImage: "shield.lefthalf.filled")
-                        }
-                    }
-                }
-                
-                Section("Notes") {
-                    if isEditing {
-                        TextEditor(text: $item.notes)
-                            .frame(minHeight: 80)
-                    } else {
-                        Text(item.notes.isEmpty ? "No notes recorded." : item.notes)
-                            .foregroundColor(item.notes.isEmpty ? .secondary : .primary)
                     }
                 }
             }
@@ -578,15 +512,15 @@ struct InventoryItemDetailSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(isEditing ? "Done" : "Close") {
+                    Button(isEditing ? "Cancel" : "Done") {
                         if isEditing {
-                            try? modelContext.save()
                             isEditing = false
                         } else {
                             dismiss()
                         }
                     }
                 }
+                
                 ToolbarItem(placement: .primaryAction) {
                     Button(isEditing ? "Save" : "Edit") {
                         if isEditing {
@@ -601,3 +535,4 @@ struct InventoryItemDetailSheet: View {
         }
     }
 }
+

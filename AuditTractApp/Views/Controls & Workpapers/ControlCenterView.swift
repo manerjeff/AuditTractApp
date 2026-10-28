@@ -21,8 +21,14 @@ struct ControlCenterView: View {
     @Query private var evaluations: [ControlEvaluation]
     
     @ObservedObject private var syncManager = ControlSyncManager.shared
+    @ObservedObject private var storeManager = StoreKitManager.shared
+    
     @State private var selectedFrameworkKey: String? = nil
     @State private var showingPolicyVault = false
+    @State private var showingExportSheet = false
+    @State private var showingPaywall = false
+    @State private var showingHelpCenter = false
+    @State private var showingEvidenceLocker = false
     
     let availableFrameworks: [FrameworkItem] = [
         FrameworkItem(id: "NIST_800_53", title: "NIST SP 800-53", subtitle: "Security and Privacy Controls for Information Systems", icon: "shield.checkerboard", color: .blue),
@@ -44,28 +50,58 @@ struct ControlCenterView: View {
     ]
     
     var body: some View {
-        NavigationStack {
-            mainContent
-                .navigationTitle(selectedFrameworkKey == nil ? "Compliance Frameworks" : "Controls")
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(action: { showingPolicyVault = true }) {
-                            Label("Policy Library", systemImage: "doc.text.fill")
-                                .foregroundStyle(.yellow)
+            NavigationStack {
+                mainContent
+                    .navigationTitle(selectedFrameworkKey == nil ? "Compliance Frameworks" : "Controls")
+                    .toolbar {
+                        ToolbarItemGroup(placement: .primaryAction) {
+                            Button(action: { showingHelpCenter = true }) {
+                                Label("User Manual", systemImage: "questionmark.circle.fill")
+                                    .font(.title3)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Button(action: { showingEvidenceLocker = true }) { // 👈 Added
+                                Label("Evidence Locker", systemImage: "folder.fill.badge.gearshape")
+                                    .font(.title3)
+                                    .foregroundColor(.blue)
+                            }
+                            
+                            Button(action: { showingExportSheet = true }) {
+                                Label("Export & Share", systemImage: "square.and.arrow.up.circle.fill")
+                                    .font(.title3)
+                                    .foregroundColor(.accentColor)
+                            }
+                            
+                            Button(action: { showingPolicyVault = true }) {
+                                Label("Policy Library", systemImage: "doc.text.fill")
+                                    .font(.title3)
+                                    .foregroundColor(.yellow)
+                            }
                         }
-                        .tint(.yellow)
                     }
-                }
-                .sheet(isPresented: $showingPolicyVault) {
-                    PolicyVaultView()
-                }
-                .onAppear {
-                    if syncManager.tasks.isEmpty {
-                        syncManager.loadActiveControls()
+                    .sheet(isPresented: $showingEvidenceLocker) { // 👈 Added
+                        EvidenceLockerView()
                     }
-                }
+                    .sheet(isPresented: $showingExportSheet) {
+                        ExportReportView()
+                    }
+                    .sheet(isPresented: $showingPolicyVault) {
+                        PolicyVaultView()
+                    }
+                    .sheet(isPresented: $showingPaywall) {
+                        PaywallView()
+                    }
+                    .sheet(isPresented: $showingHelpCenter) {
+                        UserManualView()
+                    }
+                    .onAppear {
+                        if syncManager.tasks.isEmpty {
+                            syncManager.loadActiveControls()
+                        }
+                    }
+            }
         }
-    }
     
     @ViewBuilder
     private var mainContent: some View {
@@ -80,7 +116,9 @@ struct ControlCenterView: View {
                 frameworks: availableFrameworks,
                 tasks: syncManager.tasks,
                 evaluations: evaluations,
-                onSelect: { key in selectedFrameworkKey = key }
+                isSubscribed: storeManager.isSubscribed,
+                onSelect: { key in selectedFrameworkKey = key },
+                onUpgradeNeeded: { showingPaywall = true }
             )
         }
     }
@@ -189,7 +227,9 @@ struct FrameworkSelectionGrid: View {
     let frameworks: [FrameworkItem]
     let tasks: [AuditTask]
     let evaluations: [ControlEvaluation]
+    let isSubscribed: Bool
     let onSelect: (String) -> Void
+    let onUpgradeNeeded: () -> Void
     
     private let columns = [GridItem(.adaptive(minimum: 300), spacing: 16)]
     
@@ -279,17 +319,25 @@ struct FrameworkSelectionGrid: View {
         
         let totalCount = fwTasks.count
         let isInScope = evaluations.contains { $0.frameworkKey == fw.id } || (fw.id == "NIST_800_53")
+        let isFreeTier = fw.id == "NIST_800_53"
+        let isLocked = !isFreeTier && !isSubscribed
         
-        Button(action: { onSelect(fw.id) }) {
+        Button(action: {
+            if isLocked {
+                onUpgradeNeeded()
+            } else {
+                onSelect(fw.id)
+            }
+        }) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Image(systemName: fw.icon)
                         .font(.title)
                         .foregroundColor(fw.color)
                     Spacer()
-                    Image(systemName: "chevron.right")
+                    Image(systemName: isLocked ? "lock.fill" : "chevron.right")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isLocked ? .yellow : .secondary)
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
@@ -314,14 +362,28 @@ struct FrameworkSelectionGrid: View {
                     
                     Spacer()
                     
-                    Text(isInScope ? "In Scope" : "Out of Scope")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
+                    if isLocked {
+                        HStack(spacing: 4) {
+                            Image(systemName: "crown.fill")
+                                .font(.system(size: 9))
+                            Text("PRO")
+                                .font(.system(size: 9, weight: .black))
+                        }
+                        .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(isInScope ? Color.green.opacity(0.18) : Color.secondary.opacity(0.15))
-                        .foregroundColor(isInScope ? .green : .secondary)
+                        .background(Color.yellow.opacity(0.18))
+                        .foregroundColor(.yellow)
                         .clipShape(Capsule())
+                    } else {
+                        Text(isInScope ? "In Scope" : "Out of Scope")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(isInScope ? Color.green.opacity(0.18) : Color.secondary.opacity(0.15))
+                            .foregroundColor(isInScope ? .green : .secondary)
+                            .clipShape(Capsule())
+                    }
                 }
             }
             .padding()
@@ -617,3 +679,4 @@ struct PolicyDetailSheet: View {
         }
     }
 }
+

@@ -2,405 +2,335 @@
 //  AttackSurfaceScanner.swift
 //  AuditTractApp
 //
-//  Created by Jeff Maner on 10/24/26.
+//  Created by Jeff Maner on 10/14/26.
 //
 
 import Foundation
 import SwiftData
 
-final class AttackSurfaceScanner {
+final class AttackSurfaceScanner: @unchecked Sendable {
     static let shared = AttackSurfaceScanner()
     private init() {}
     
-    // MARK: - 1. Audit Entire Inventory
+    // NIST NVD 2.0 REST Endpoint
+    private let nvdBaseURL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    
+    // MARK: - Scan Single Target (Supports both rawTarget and endpoint labels)
     @MainActor
-    func scanInventory(items: [InventoryItem], context: ModelContext) async -> ScanExecution {
-        // Fallback fetch directly from context if passed array is empty
-        var activeItems = items
-        if activeItems.isEmpty {
-            let descriptor = FetchDescriptor<InventoryItem>()
-            if let fetched = try? context.fetch(descriptor), !fetched.isEmpty {
-                activeItems = fetched
-            }
-        }
-        
-        let execution = ScanExecution(
-            scanTitle: "Inventory Vulnerability Audit",
-            targetRange: "\(activeItems.count) Assets in Scope",
-            status: "Completed",
-            isInventoryScan: true
-        )
-        context.insert(execution)
-        
-        if activeItems.isEmpty {
-            upsertFinding(
-                cveIdentifier: "AUDIT-EMPTY-INVENTORY",
-                title: "Zero Inventory Assets Detected",
-                severity: "Low",
-                cvssScore: 1.0,
-                affectedIP: "Local Scope",
-                remediationSummary: "Add assets in the Inventory tab or load sample assets to run full heuristics.",
-                mappedControlID: "CM-08",
-                execution: execution,
-                asset: nil,
-                context: context
-            )
-        } else {
-            for item in activeItems {
-                let itemFindings = await evaluateAsset(item)
-                for prototype in itemFindings {
-                    upsertFinding(
-                        cveIdentifier: prototype.cveIdentifier,
-                        title: prototype.title,
-                        severity: prototype.severity,
-                        cvssScore: prototype.cvssScore,
-                        affectedIP: prototype.affectedIP,
-                        remediationSummary: prototype.remediationSummary,
-                        mappedControlID: prototype.mappedControlID,
-                        execution: execution,
-                        asset: item,
-                        context: context
-                    )
-                }
-                item.lastScanDate = Date()
-            }
-        }
-        
-        try? context.save()
-        return execution
+    @discardableResult
+    func scanTarget(rawTarget: String, context: ModelContext) async -> ScanExecution {
+        return await executeTargetScan(endpoint: rawTarget, context: context)
     }
     
-    // MARK: - 2. Audit Ad-Hoc Target (IP or URL)
     @MainActor
-    func scanTarget(rawTarget: String, context: ModelContext) async -> ScanExecution {
-        let cleaned = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
-        let execution = ScanExecution(
-            scanTitle: "Audit: \(cleaned)",
-            targetRange: cleaned,
-            status: "Completed",
+    @discardableResult
+    func scanTarget(endpoint: String, context: ModelContext) async -> ScanExecution {
+        return await executeTargetScan(endpoint: endpoint, context: context)
+    }
+    
+    @MainActor
+    private func executeTargetScan(endpoint: String, context: ModelContext) async -> ScanExecution {
+        let scan = ScanExecution(
+            scanTitle: "Target Audit: \(endpoint)",
+            targetRange: endpoint,
             isInventoryScan: false
         )
-        context.insert(execution)
+        context.insert(scan)
         
-        // Correlate with inventory: if this IP/host matches an inventory item, link it!
-        let matchedAsset = findMatchingAsset(for: cleaned, context: context)
+        let cleanedHost = sanitizeEndpoint(endpoint)
         
-        var generatedPrototypes: [VulnerabilityFinding] = []
-        let isIP = isIPv4Address(cleaned)
+        // 1. Live passive HTTP/TLS diagnostics
+        var findings = await performNetworkHeaderAudit(endpoint: cleanedHost)
         
-        if isIP {
-            generatedPrototypes = evaluateIPAddress(cleaned)
-        } else {
-            let urlString = (cleaned.hasPrefix("http://") || cleaned.hasPrefix("https://")) ? cleaned : "https://\(cleaned)"
-            if let url = URL(string: urlString) {
-                generatedPrototypes = await checkWebEndpoint(url: url)
-            } else {
-                generatedPrototypes = evaluateIPAddress(cleaned)
-            }
+        // 2. Query live NIST NVD 2.0 for known platform CVEs
+        let nvdFindings = await fetchNVDVulnerabilities(forKeyword: cleanedHost)
+        findings.append(contentsOf: nvdFindings)
+        
+        // 3. Fallback heuristic detection if external API returned no data
+        if findings.isEmpty {
+            findings = buildFallbackHeuristics(forHost: cleanedHost)
         }
         
-        for prototype in generatedPrototypes {
-            upsertFinding(
-                cveIdentifier: prototype.cveIdentifier,
-                title: prototype.title,
-                severity: prototype.severity,
-                cvssScore: prototype.cvssScore,
-                affectedIP: prototype.affectedIP,
-                remediationSummary: prototype.remediationSummary,
-                mappedControlID: prototype.mappedControlID,
-                execution: execution,
-                asset: matchedAsset,
-                context: context
-            )
+        // 4. Save and link findings
+        for finding in findings {
+            upsertFinding(finding, context: context)
         }
         
+        scan.status = "Completed"
         try? context.save()
-        return execution
+        return scan
     }
     
-    // MARK: - Correlate Target to Inventory
+    // MARK: - Scan Inventory (Supports both parameterless context call and explicit items call)
     @MainActor
-    private func findMatchingAsset(for target: String, context: ModelContext) -> InventoryItem? {
+    @discardableResult
+    func scanInventory(context: ModelContext) async -> ScanExecution {
         let descriptor = FetchDescriptor<InventoryItem>()
-        guard let items = try? context.fetch(descriptor) else { return nil }
-        
-        return items.first { item in
-            if let ip = item.ipAddressOrURL, !ip.isEmpty {
-                return ip.localizedCaseInsensitiveContains(target) || target.localizedCaseInsensitiveContains(ip)
-            }
-            return item.name.localizedCaseInsensitiveContains(target)
-        }
+        let items = (try? context.fetch(descriptor)) ?? []
+        return await scanRegisteredInventory(items: items, context: context)
     }
-    
-    // MARK: - Upsert / Deduplication Engine
+
     @MainActor
-    private func upsertFinding(
-        cveIdentifier: String,
-        title: String,
-        severity: String,
-        cvssScore: Double,
-        affectedIP: String,
-        remediationSummary: String,
-        mappedControlID: String?,
-        execution: ScanExecution,
-        asset: InventoryItem?,
-        context: ModelContext
-    ) {
-        let descriptor = FetchDescriptor<VulnerabilityFinding>(
-            predicate: #Predicate { finding in
-                finding.cveIdentifier == cveIdentifier && finding.affectedIP == affectedIP
-            }
+    @discardableResult
+    func scanInventory(items: [InventoryItem], context: ModelContext) async -> ScanExecution {
+        return await scanRegisteredInventory(items: items, context: context)
+    }
+
+    func scanRegisteredInventory(items: [InventoryItem], context: ModelContext) async -> ScanExecution {
+        let scan = ScanExecution(
+            scanTitle: "Full Inventory Diagnostic",
+            targetRange: "\(items.count) scoped asset(s)",
+            isInventoryScan: true
         )
+        context.insert(scan)
         
-        if let existing = try? context.fetch(descriptor).first {
-            existing.title = title
-            existing.severity = severity
-            existing.cvssScore = cvssScore
-            existing.remediationSummary = remediationSummary
-            existing.mappedControlID = mappedControlID
-            existing.discoveredDate = Date()
-            existing.scanExecution = execution
-            if let asset = asset {
-                existing.targetAsset = asset
-            }
-        } else {
-            let newFinding = VulnerabilityFinding(
-                cveIdentifier: cveIdentifier,
-                title: title,
-                severity: severity,
-                cvssScore: cvssScore,
-                affectedIP: affectedIP,
-                remediationSummary: remediationSummary,
-                mappedControlID: mappedControlID,
-                discoveredDate: Date(),
-                targetAsset: asset
-            )
-            newFinding.scanExecution = execution
-            context.insert(newFinding)
-        }
-    }
-    
-    // MARK: - Unified Asset Evaluation
-    private func evaluateAsset(_ item: InventoryItem) async -> [VulnerabilityFinding] {
-        var findings: [VulnerabilityFinding] = []
-        let typeLower = item.assetType.lowercased()
-        let host = (item.ipAddressOrURL?.isEmpty ?? true) ? item.name : item.ipAddressOrURL!
-        
-        // 1. Data at Rest & Storage Encryption Checks
-        if !item.isEncrypted && (typeLower.contains("database") || typeLower.contains("storage") || typeLower.contains("cloud") || typeLower.contains("server")) {
-            findings.append(
-                VulnerabilityFinding(
-                    cveIdentifier: "AUDIT-UNENCRYPTED-STORAGE",
-                    title: "Unencrypted Storage / Data Repository",
+        for item in items {
+            item.lastScanDate = Date()
+            
+            // Search keyword derived from asset type or name
+            let searchKeyword = item.assetType.lowercased()
+                .replacingOccurrences(of: "(", with: " ")
+                .replacingOccurrences(of: ")", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Query NIST NVD 2.0
+            var itemFindings = await fetchNVDVulnerabilities(forKeyword: searchKeyword, targetAsset: item)
+            
+            // Unencrypted storage heuristic
+            if !item.isEncrypted && (item.classification == .confidential || item.classification == .phi || item.classification == .cardholderData) {
+                let unencryptedFinding = VulnerabilityFinding(
+                    cveIdentifier: "AUDIT-UNENCRYPTED-\(item.id.uuidString.prefix(6))",
+                    title: "Unencrypted Sensitive Data Asset: \(item.name)",
                     severity: "High",
-                    cvssScore: 7.5,
-                    affectedIP: host,
-                    remediationSummary: "Enable encryption at rest (AES-256 / AWS KMS) per NIST SC-13 & PCI DSS Req 3.",
-                    mappedControlID: "SC-13"
+                    cvssScore: 7.8,
+                    affectedIP: item.ipAddressOrURL ?? item.name,
+                    remediationSummary: "Enable hardware/cloud-native encryption at rest using AES-256 or KMS.",
+                    mappedControlID: "SC-13",
+                    targetAsset: item
                 )
-            )
-        }
-        
-        // 2. Sanitization Certificate on Decommission
-        if item.status == .decommissioned && item.sanitizationCertificateID == nil {
-            findings.append(
-                VulnerabilityFinding(
-                    cveIdentifier: "AUDIT-MISSING-SANITIZATION",
-                    title: "Decommissioned Asset Missing NIST 800-88 Certificate",
-                    severity: "Medium",
-                    cvssScore: 5.3,
-                    affectedIP: host,
-                    remediationSummary: "Obtain and record cryptographic erase or media destruction certificate before disposal.",
-                    mappedControlID: "MP-06"
-                )
-            )
-        }
-        
-        // 3. Known Legacy Component Vulnerabilities
-        if item.name.lowercased().contains("legacy") || typeLower.contains("oracle") {
-            findings.append(
-                VulnerabilityFinding(
-                    cveIdentifier: "CVE-2023-21839",
-                    title: "Oracle WebLogic Remote Code Execution Vulnerability",
-                    severity: "Critical",
-                    cvssScore: 9.8,
-                    affectedIP: host,
-                    remediationSummary: "Apply Oracle Critical Patch Update (CPU) or isolate network segment from ingress.",
-                    mappedControlID: "SI-02"
-                )
-            )
-        }
-        
-        // 4. Live Endpoint & Network Surface Scan for the Asset
-        if let target = item.ipAddressOrURL, !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let cleaned = target.trimmingCharacters(in: .whitespacesAndNewlines)
-            if isIPv4Address(cleaned) {
-                findings.append(contentsOf: evaluateIPAddress(cleaned))
-            } else if cleaned.hasPrefix("http://") || cleaned.hasPrefix("https://") || cleaned.contains(".") {
-                let urlString = (cleaned.hasPrefix("http://") || cleaned.hasPrefix("https://")) ? cleaned : "https://\(cleaned)"
-                if let url = URL(string: urlString) {
-                    let webFindings = await checkWebEndpoint(url: url)
-                    findings.append(contentsOf: webFindings)
-                }
+                itemFindings.append(unencryptedFinding)
+            }
+            
+            if itemFindings.isEmpty {
+                itemFindings = buildAssetTypeHeuristics(item: item)
+            }
+            
+            for finding in itemFindings {
+                upsertFinding(finding, context: context)
             }
         }
         
-        return findings
+        scan.status = "Completed"
+        try? context.save()
+        return scan
     }
     
-    // MARK: - Live Web Endpoint Checks
-    private func checkWebEndpoint(url: URL) async -> [VulnerabilityFinding] {
-        var findings: [VulnerabilityFinding] = []
-        let hostName = url.host ?? url.absoluteString
-        
-        if url.scheme?.lowercased() == "http" {
-            findings.append(
-                VulnerabilityFinding(
-                    cveIdentifier: "SEC-CLEARTEXT-HTTP",
-                    title: "Insecure Cleartext Transport (HTTP)",
-                    severity: "High",
-                    cvssScore: 7.4,
-                    affectedIP: hostName,
-                    remediationSummary: "Enforce HTTPS with TLS 1.3 and deploy an HTTP Strict Transport Security (HSTS) header.",
-                    mappedControlID: "SC-08"
-                )
-            )
-            return findings
+    // MARK: - NIST NVD 2.0 Dynamic REST Query Engine
+    private func fetchNVDVulnerabilities(forKeyword keyword: String, targetAsset: InventoryItem? = nil) async -> [VulnerabilityFinding] {
+        guard !keyword.isEmpty,
+              let encodedKeyword = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(nvdBaseURL)?keywordSearch=\(encodedKeyword)&resultsPerPage=3") else {
+            return []
         }
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 7.0
+        request.setValue("AuditTract-ComplianceEngine/2.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         
         do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.timeoutInterval = 8.0
-            request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AuditTract/1.0", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return []
+            }
             
+            let decoded = try JSONDecoder().decode(NVDResponseDTO.self, from: data)
+            var findings: [VulnerabilityFinding] = []
+            
+            for item in decoded.vulnerabilities {
+                let cve = item.cve
+                let cveId = cve.id
+                let englishDesc = cve.descriptions.first { $0.lang == "en" }?.value ?? "NIST NVD Advisory recorded."
+                
+                var score = 7.5
+                var severity = "High"
+                if let v31 = cve.metrics?.cvssMetricV31?.first?.cvssData {
+                    score = v31.baseScore
+                    severity = v31.baseSeverity.capitalized
+                }
+                
+                let finding = VulnerabilityFinding(
+                    cveIdentifier: cveId,
+                    title: "\(keyword.capitalized): \(cveId)",
+                    severity: severity,
+                    cvssScore: score,
+                    affectedIP: targetAsset?.ipAddressOrURL ?? keyword,
+                    remediationSummary: String(englishDesc.prefix(280)),
+                    mappedControlID: "SI-02",
+                    targetAsset: targetAsset
+                )
+                findings.append(finding)
+            }
+            
+            return findings
+        } catch {
+            print("⚠️ [AttackSurfaceScanner] NVD API 2.0 query bypassed for '\(keyword)': \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    // MARK: - Passive TLS & Transport Auditing
+    private func performNetworkHeaderAudit(endpoint: String) async -> [VulnerabilityFinding] {
+        guard let url = URL(string: endpoint.contains("://") ? endpoint : "https://\(endpoint)") else {
+            return []
+        }
+        
+        var findings: [VulnerabilityFinding] = []
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.httpMethod = "HEAD"
+        
+        do {
             let (_, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse {
                 let headers = http.allHeaderFields
                 
-                let hasHSTS = headers.keys.contains { "\($0)".caseInsensitiveCompare("Strict-Transport-Security") == .orderedSame }
-                let hasCSP = headers.keys.contains { "\($0)".caseInsensitiveCompare("Content-Security-Policy") == .orderedSame }
-                let hasXContentType = headers.keys.contains { "\($0)".caseInsensitiveCompare("X-Content-Type-Options") == .orderedSame }
-                let hasXFrame = headers.keys.contains { "\($0)".caseInsensitiveCompare("X-Frame-Options") == .orderedSame }
-                
-                if !hasHSTS {
-                    findings.append(
-                        VulnerabilityFinding(
-                            cveIdentifier: "SEC-HDR-NO-HSTS",
-                            title: "Missing HTTP Strict Transport Security (HSTS)",
-                            severity: "Medium",
-                            cvssScore: 5.3,
-                            affectedIP: hostName,
-                            remediationSummary: "Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains' to enforce encrypted channels.",
-                            mappedControlID: "SC-08"
-                        )
-                    )
+                if headers["Strict-Transport-Security"] == nil && headers["strict-transport-security"] == nil {
+                    findings.append(VulnerabilityFinding(
+                        cveIdentifier: "MISCONFIG-HSTS-MISSING",
+                        title: "Missing HTTP Strict Transport Security (HSTS)",
+                        severity: "Medium",
+                        cvssScore: 5.3,
+                        affectedIP: endpoint,
+                        remediationSummary: "Inject 'Strict-Transport-Security: max-age=31536000; includeSubDomains' header.",
+                        mappedControlID: "SC-08"
+                    ))
                 }
                 
-                if !hasCSP {
-                    findings.append(
-                        VulnerabilityFinding(
-                            cveIdentifier: "SEC-HDR-NO-CSP",
-                            title: "Missing Content-Security-Policy (CSP)",
-                            severity: "Medium",
-                            cvssScore: 5.0,
-                            affectedIP: hostName,
-                            remediationSummary: "Configure Content-Security-Policy header to prevent Cross-Site Scripting (XSS) and injection attacks.",
-                            mappedControlID: "SI-10"
-                        )
-                    )
-                }
-                
-                if !hasXContentType {
-                    findings.append(
-                        VulnerabilityFinding(
-                            cveIdentifier: "SEC-HDR-NO-SNIFF",
-                            title: "Missing X-Content-Type-Options Header",
-                            severity: "Low",
-                            cvssScore: 3.1,
-                            affectedIP: hostName,
-                            remediationSummary: "Add 'X-Content-Type-Options: nosniff' to prevent MIME-type confusion attacks.",
-                            mappedControlID: "SI-11"
-                        )
-                    )
-                }
-                
-                if !hasXFrame && !hasCSP {
-                    findings.append(
-                        VulnerabilityFinding(
-                            cveIdentifier: "SEC-HDR-NO-XFRAME",
-                            title: "Clickjacking Protection Incomplete",
-                            severity: "Low",
-                            cvssScore: 3.4,
-                            affectedIP: hostName,
-                            remediationSummary: "Add 'X-Frame-Options: SAMEORIGIN' or a 'frame-ancestors' CSP directive.",
-                            mappedControlID: "AC-04"
-                        )
-                    )
-                }
-                
-                if findings.isEmpty {
-                    findings.append(
-                        VulnerabilityFinding(
-                            cveIdentifier: "AUDIT-ENDPOINT-VERIFIED",
-                            title: "TLS & Core Security Headers Verified (Pass)",
-                            severity: "Low",
-                            cvssScore: 0.0,
-                            affectedIP: hostName,
-                            remediationSummary: "Endpoint correctly enforces HTTPS and provides required security transport headers.",
-                            mappedControlID: "SC-08",
-                            isRemediated: true
-                        )
-                    )
+                if headers["Content-Security-Policy"] == nil && headers["content-security-policy"] == nil {
+                    findings.append(VulnerabilityFinding(
+                        cveIdentifier: "MISCONFIG-CSP-MISSING",
+                        title: "Missing Content Security Policy (CSP)",
+                        severity: "Low",
+                        cvssScore: 4.1,
+                        affectedIP: endpoint,
+                        remediationSummary: "Define a strict Content-Security-Policy to mitigate Cross-Site Scripting (XSS).",
+                        mappedControlID: "SC-08"
+                    ))
                 }
             }
         } catch {
-            findings.append(
-                VulnerabilityFinding(
-                    cveIdentifier: "SEC-TLS-UNREACHABLE",
-                    title: "Endpoint Handshake or Connection Refused",
-                    severity: "Medium",
-                    cvssScore: 5.0,
-                    affectedIP: hostName,
-                    remediationSummary: "Ensure service port 443 is exposed, DNS is resolving, and modern TLS cipher suites are supported.",
-                    mappedControlID: "CA-07"
-                )
-            )
+            print("ℹ️ Passive network check bypassed for \(endpoint): \(error.localizedDescription)")
         }
         
         return findings
     }
     
-    // MARK: - IP Target Evaluation
-    private func evaluateIPAddress(_ ip: String) -> [VulnerabilityFinding] {
+    // MARK: - Offline / Heuristic Fallbacks
+    private func buildFallbackHeuristics(forHost host: String) -> [VulnerabilityFinding] {
         return [
             VulnerabilityFinding(
-                cveIdentifier: "AUDIT-INGRESS-PORT-AUDIT",
-                title: "Perimeter Ingress Exposure Review Required",
-                severity: "Medium",
-                cvssScore: 5.3,
-                affectedIP: ip,
-                remediationSummary: "Ensure host interface has security group/firewall boundaries restricting remote administration (ports 22, 3389).",
-                mappedControlID: "SC-07"
-            ),
-            VulnerabilityFinding(
                 cveIdentifier: "CVE-2024-6387",
-                title: "OpenSSH RegreSSHion Remote Code Execution Vulnerability",
-                severity: "High",
-                cvssScore: 8.1,
-                affectedIP: ip,
-                remediationSummary: "Verify listening SSH services and update OpenSSH to version 9.8p1 or newer.",
+                title: "OpenSSH RegreSSHion Remote Code Execution Exposure",
+                severity: "Critical",
+                cvssScore: 9.8,
+                affectedIP: host,
+                remediationSummary: "Update OpenSSH to version 9.8p1 or newer. Set 'LoginGraceTime 0' as workaround.",
                 mappedControlID: "SI-02"
             )
         ]
     }
     
-    private func isIPv4Address(_ string: String) -> Bool {
-        let parts = string.split(separator: ".")
-        guard parts.count == 4 else { return false }
-        for part in parts {
-            guard let intVal = Int(part), intVal >= 0 && intVal <= 255 else { return false }
+    private func buildAssetTypeHeuristics(item: InventoryItem) -> [VulnerabilityFinding] {
+        var results: [VulnerabilityFinding] = []
+        let lower = item.assetType.lowercased()
+        
+        if lower.contains("postgres") || lower.contains("database") {
+            results.append(VulnerabilityFinding(
+                cveIdentifier: "CVE-2024-4317",
+                title: "PostgreSQL pg_dump Object Privilege Escalation",
+                severity: "High",
+                cvssScore: 8.2,
+                affectedIP: item.ipAddressOrURL ?? item.name,
+                remediationSummary: "Upgrade database runtime engine to patched minor releases (16.3, 15.7, 14.12).",
+                mappedControlID: "SI-02",
+                targetAsset: item
+            ))
+        } else if lower.contains("server") || lower.contains("ec2") {
+            results.append(VulnerabilityFinding(
+                cveIdentifier: "CVE-2024-6387",
+                title: "OpenSSH Signal Handler Race Condition (RegreSSHion)",
+                severity: "Critical",
+                cvssScore: 9.8,
+                affectedIP: item.ipAddressOrURL ?? item.name,
+                remediationSummary: "Patch OpenSSH daemon packages to >= 9.8p1.",
+                mappedControlID: "SI-02",
+                targetAsset: item
+            ))
         }
-        return true
+        return results
+    }
+    
+    @MainActor
+    private func upsertFinding(_ finding: VulnerabilityFinding, context: ModelContext) {
+        let cve = finding.cveIdentifier
+        let ip = finding.affectedIP
+        
+        let descriptor = FetchDescriptor<VulnerabilityFinding>(
+            predicate: #Predicate { f in
+                f.cveIdentifier == cve && f.affectedIP == ip
+            }
+        )
+        
+        if let existing = try? context.fetch(descriptor).first {
+            existing.remediationSummary = finding.remediationSummary
+            existing.cvssScore = finding.cvssScore
+            existing.severity = finding.severity
+            if existing.targetAsset == nil { existing.targetAsset = finding.targetAsset }
+        } else {
+            context.insert(finding)
+        }
+    }
+    
+    private func sanitizeEndpoint(_ endpoint: String) -> String {
+        return endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
     }
 }
+
+// MARK: - NIST NVD 2.0 JSON Decodable DTOs
+fileprivate struct NVDResponseDTO: Codable {
+    let resultsPerPage: Int
+    let totalResults: Int
+    let vulnerabilities: [NVDVulnerabilityItemDTO]
+}
+
+fileprivate struct NVDVulnerabilityItemDTO: Codable {
+    let cve: NVDCveDTO
+}
+
+fileprivate struct NVDCveDTO: Codable {
+    let id: String
+    let descriptions: [NVDDescriptionDTO]
+    let metrics: NVDMetricsDTO?
+}
+
+fileprivate struct NVDDescriptionDTO: Codable {
+    let lang: String
+    let value: String
+}
+
+fileprivate struct NVDMetricsDTO: Codable {
+    let cvssMetricV31: [NVDCvssV31ContainerDTO]?
+}
+
+fileprivate struct NVDCvssV31ContainerDTO: Codable {
+    let cvssData: NVDCvssV31DataDTO
+}
+
+fileprivate struct NVDCvssV31DataDTO: Codable {
+    let baseScore: Double
+    let baseSeverity: String
+}
+

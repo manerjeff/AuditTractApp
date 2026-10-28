@@ -11,6 +11,9 @@ import SwiftData
 struct ExportReportView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var evaluations: [ControlEvaluation]
+    @Query private var inventoryItems: [InventoryItem]
+    @Query private var vulnerabilities: [VulnerabilityFinding]
+    @Query private var scans: [ScanExecution]
     
     @State private var exportedFileURL: URL?
     @State private var showShareSheet = false
@@ -19,30 +22,62 @@ struct ExportReportView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Export Audit Workpapers") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Export Audit Manifest & Notes")
+                // Summary Metrics of the package
+                Section("Package Inclusions") {
+                    LabeledContent("Evaluated Controls", value: "\(evaluations.count)")
+                    LabeledContent("Registered Inventory Assets", value: "\(inventoryItems.count)")
+                    LabeledContent("Attack Surface Findings", value: "\(vulnerabilities.count)")
+                    LabeledContent("Recorded Audit Scans", value: "\(scans.count)")
+                }
+                
+                // Comprehensive Binder
+                Section("Comprehensive Audit Binder (CSV)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("All-In-One Audit Manifest")
                             .font(.headline)
-                        Text("Generates a structured CSV file containing control statuses, evidence file path locations, and internal workpaper notes for auditor handoff.")
+                        Text("Exports a structured CSV combining control workpapers, full asset inventory with custodians, and attack surface CVE findings for executive or regulatory handoff.")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
                     
-                    Button(action: generateCSVReport) {
+                    Button(action: generateComprehensiveCSV) {
                         HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Export CSV Workpaper Report")
+                            Image(systemName: "doc.richtext.fill")
+                                .foregroundColor(.accentColor)
+                            Text("Export Comprehensive Audit CSV")
                                 .fontWeight(.semibold)
                         }
                     }
                 }
                 
-                Section("Export Audit Package (JSON Envelope)") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Full Audit State Package")
+                // Focused Workpapers Export
+                Section("Control Workpapers Only (CSV)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Framework Evaluations")
                             .font(.headline)
-                        Text("Export all control evaluations and evidence manifest pointers as a portable JSON envelope that can be imported into another AuditTract instance.")
+                        Text("Export control IDs, status determinations, auditor notes, and evidence location pointers.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                    
+                    Button(action: generateWorkpaperCSV) {
+                        HStack {
+                            Image(systemName: "list.clipboard.fill")
+                                .foregroundColor(.blue)
+                            Text("Export Controls Workpaper CSV")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+                
+                // Master JSON Package
+                Section("Portable Audit Package (JSON Envelope)") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Full System State Envelope")
+                            .font(.headline)
+                        Text("Exports a complete cryptographic snapshot including controls, asset metadata, scan records, and vulnerability findings to migrate or archive.")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -51,7 +86,8 @@ struct ExportReportView: View {
                     Button(action: generateEnvelopeExport) {
                         HStack {
                             Image(systemName: "doc.zipper")
-                            Text("Export JSON Audit Envelope")
+                                .foregroundColor(.orange)
+                            Text("Export Master JSON Audit Envelope")
                                 .fontWeight(.semibold)
                         }
                     }
@@ -59,11 +95,12 @@ struct ExportReportView: View {
                 
                 if !exportStatusMessage.isEmpty {
                     Section {
-                        HStack {
+                        HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                             Text(exportStatusMessage)
                                 .font(.subheadline)
+                                .fontWeight(.medium)
                         }
                     }
                 }
@@ -77,21 +114,44 @@ struct ExportReportView: View {
         }
     }
     
-    private func generateCSVReport() {
-        let csvData = ReportExporter.shared.generateEvaluationsCSV(from: evaluations)
-        let fileName = "AuditTract_Workpapers_\(Int(Date().timeIntervalSince1970)).csv"
+    // MARK: - Export Generators
+    
+    private func generateComprehensiveCSV() {
+        let content = ReportExporter.shared.generateComprehensiveAuditCSV(
+            evaluations: evaluations,
+            inventory: inventoryItems,
+            vulnerabilities: vulnerabilities
+        )
+        let fileName = "AuditTract_ComprehensiveBinder_\(Int(Date().timeIntervalSince1970)).csv"
         
-        if let url = ReportExporter.shared.saveReportToDocuments(content: csvData, fileName: fileName) {
+        if let url = ReportExporter.shared.saveReportToDocuments(content: content, fileName: fileName) {
             self.exportedFileURL = url
-            self.exportStatusMessage = "CSV exported successfully."
+            self.exportStatusMessage = "Comprehensive Binder CSV ready."
+            self.showShareSheet = true
+        }
+    }
+    
+    private func generateWorkpaperCSV() {
+        let content = ReportExporter.shared.generateEvaluationsCSV(from: evaluations)
+        let fileName = "AuditTract_Controls_\(Int(Date().timeIntervalSince1970)).csv"
+        
+        if let url = ReportExporter.shared.saveReportToDocuments(content: content, fileName: fileName) {
+            self.exportedFileURL = url
+            self.exportStatusMessage = "Controls Workpaper CSV ready."
             self.showShareSheet = true
         }
     }
     
     private func generateEnvelopeExport() {
-        if let url = AuditEnvelopeManager.shared.exportEvaluationsEnvelope(title: "Audit Export", evaluations: evaluations) {
+        if let url = AuditEnvelopeManager.shared.exportCompleteAuditPackage(
+            title: "Comprehensive Audit Snapshot",
+            evaluations: evaluations,
+            inventory: inventoryItems,
+            vulnerabilities: vulnerabilities,
+            scans: scans
+        ) {
             self.exportedFileURL = url
-            self.exportStatusMessage = "Audit JSON Envelope created successfully."
+            self.exportStatusMessage = "Master JSON Package ready."
             self.showShareSheet = true
         }
     }
@@ -101,7 +161,6 @@ struct ExportReportView: View {
 #if canImport(UIKit)
 import UIKit
 
-// MARK: - iOS / iPadOS UIKit Activity View Sheet
 struct ShareSheetView: UIViewControllerRepresentable {
     var activityItems: [Any]
     

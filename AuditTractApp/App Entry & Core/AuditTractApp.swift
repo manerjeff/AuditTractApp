@@ -21,7 +21,8 @@ struct AuditTractApp: App {
             Location.self,
             Employee.self,
             ScanExecution.self,
-            VulnerabilityFinding.self
+            VulnerabilityFinding.self,
+            SecurityNewsArticle.self // 👈 Added here
         ])
     }
 }

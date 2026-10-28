@@ -13,6 +13,7 @@ struct ControlDetailView: View {
     let task: AuditTask
     @Environment(\.modelContext) private var modelContext
     @Query private var evaluations: [ControlEvaluation]
+    @Query private var allFindings: [VulnerabilityFinding]
     
     @State private var status: String = "Not Evaluated"
     @State private var auditorNotes: String = ""
@@ -20,9 +21,24 @@ struct ControlDetailView: View {
     @State private var lastSavedTime: String = ""
     @State private var showSavedToast = false
     @State private var showingFileImporter = false
+    @State private var selectedFinding: VulnerabilityFinding? = nil
     
     var currentEvaluation: ControlEvaluation? {
         evaluations.first { $0.controlID == task.id }
+    }
+    
+    // Correlate attack surface findings mapped to this control
+    var correlatedFindings: [VulnerabilityFinding] {
+        allFindings.filter { finding in
+            guard let mapped = finding.mappedControlID else { return false }
+            return task.id.localizedCaseInsensitiveContains(mapped) ||
+                   mapped.localizedCaseInsensitiveContains(task.id) ||
+                   task.id.components(separatedBy: "-").contains(where: { $0.caseInsensitiveCompare(mapped) == .orderedSame })
+        }
+    }
+    
+    var openFindingsCount: Int {
+        correlatedFindings.filter { !$0.isRemediated }.count
     }
     
     var dynamicEvidenceRequirements: [String] {
@@ -72,7 +88,98 @@ struct ControlDetailView: View {
                 }
             }
             
-            // MARK: - 2. Control Requirement
+            // MARK: - 2. Attack Surface Correlated Flaws & CVEs
+            if !correlatedFindings.isEmpty {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Label("\(correlatedFindings.count) Attack Surface Finding(s)", systemImage: "shield.lefthalf.filled")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundColor(openFindingsCount > 0 ? .red : .green)
+                            
+                            Spacer()
+                            
+                            if openFindingsCount > 0 {
+                                Text("\(openFindingsCount) Open")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.red.opacity(0.15))
+                                    .foregroundColor(.red)
+                                    .clipShape(Capsule())
+                            } else {
+                                Text("All Remediated")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.green.opacity(0.15))
+                                    .foregroundColor(.green)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        ForEach(correlatedFindings) { finding in
+                            Button {
+                                selectedFinding = finding
+                            } label: {
+                                HStack(alignment: .top) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text(finding.cveIdentifier)
+                                                .font(.caption)
+                                                .fontWeight(.black)
+                                            
+                                            Text("CVSS \(String(format: "%.1f", finding.cvssScore))")
+                                                .font(.caption2)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(finding.cvssScore >= 7.0 ? .red : .orange)
+                                        }
+                                        
+                                        Text(finding.title)
+                                            .font(.caption)
+                                            .foregroundColor(.primary)
+                                            .lineLimit(1)
+                                        
+                                        Text("Host: \(finding.affectedIP)\(finding.targetAsset != nil ? " • " + finding.targetAsset!.name : "")")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: finding.isRemediated ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                        .foregroundColor(finding.isRemediated ? .green : .red)
+                                        .font(.caption)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.vertical, 2)
+                        }
+                        
+                        Divider()
+                        
+                        Button {
+                            attachFindingsToEvidence()
+                        } label: {
+                            Label("Attach Findings Summary to Evidence Manifest", systemImage: "doc.badge.plus")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Automated Attack Surface Correlation")
+                } footer: {
+                    Text("AuditTract automatically correlates scan findings from registered assets and ad-hoc IP/URL audits to this control requirement.")
+                }
+            }
+            
+            // MARK: - 3. Control Requirement
             if let statement = task.controlStatement, !statement.isEmpty {
                 Section("Control Requirement") {
                     Text(statement)
@@ -89,7 +196,7 @@ struct ControlDetailView: View {
                 }
             }
             
-            // MARK: - 3. Discussion & Guidance
+            // MARK: - 4. Discussion & Guidance
             if let discussion = task.discussion, !discussion.isEmpty {
                 Section("Supplemental Guidance & Discussion") {
                     Text(discussion)
@@ -99,7 +206,7 @@ struct ControlDetailView: View {
                 }
             }
             
-            // MARK: - 4. REQUIRED EVIDENCE CHECKLIST
+            // MARK: - 5. REQUIRED EVIDENCE CHECKLIST
             Section("Required Evidence Checklist") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Curate and verify the following artifacts prior to final auditor submission:")
@@ -122,7 +229,7 @@ struct ControlDetailView: View {
                 .padding(.vertical, 4)
             }
             
-            // MARK: - 5. RELATED CONTROLS
+            // MARK: - 6. RELATED CONTROLS
             if let related = task.relatedControls, !related.isEmpty {
                 Section("Related Controls") {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -143,7 +250,7 @@ struct ControlDetailView: View {
                 }
             }
             
-            // MARK: - 6. COMPLIANCE STATUS
+            // MARK: - 7. COMPLIANCE STATUS
             Section("Compliance Status") {
                 Picker("Status", selection: $status) {
                     Text("Not Evaluated").tag("Not Evaluated")
@@ -155,9 +262,19 @@ struct ControlDetailView: View {
                 }
                 .pickerStyle(.menu)
                 .onChange(of: status) { _, _ in autoSave() }
+                
+                if openFindingsCount > 0 && (status == "Compliant" || status == "Evidence Collected") {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        Text("Note: This control has \(openFindingsCount) unremediated flaw(s) on the attack surface.")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                }
             }
             
-            // MARK: - 7. EVIDENCE MANIFEST & FILE REFERENCES
+            // MARK: - 8. EVIDENCE MANIFEST & FILE REFERENCES
             Section(
                 header: Text("Evidence Manifest & File References"),
                 footer: Text("Enter file names, local path references, or tap the folder icon to attach a file from your device.")
@@ -187,8 +304,7 @@ struct ControlDetailView: View {
                 .padding(.vertical, 4)
             }
             
-           
-            // MARK: - 8. CLIENT WORKING NOTES
+            // MARK: - 9. CLIENT WORKING NOTES
             Section(
                 header: Text("Client Working Notes"),
                 footer: Text("Use this space to log internal team notes, ongoing gap analysis, or pending questions for system owners.")
@@ -198,9 +314,7 @@ struct ControlDetailView: View {
                     .onChange(of: auditorNotes) { _, _ in autoSave() }
             }
             
-           
-           
-            // MARK: - 9. AUTO-SAVE ACTION & TIMESTAMP BAR
+            // MARK: - 10. AUTO-SAVE ACTION & TIMESTAMP BAR
             Section {
                 Button(action: { autoSave(explicitTrigger: true) }) {
                     HStack {
@@ -223,10 +337,12 @@ struct ControlDetailView: View {
             }
         }
         .navigationTitle(task.id)
-#if os(iOS)
-.navigationBarTitleDisplayMode(.inline)
-#endif
-
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .sheet(item: $selectedFinding) { finding in
+            FindingDetailSheet(finding: finding)
+        }
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [.item],
@@ -267,6 +383,25 @@ struct ControlDetailView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+    }
+    
+    private func attachFindingsToEvidence() {
+        let summaryPointers = correlatedFindings.map { f in
+            "[\(f.cveIdentifier)] \(f.affectedIP) - \(f.isRemediated ? "REMEDIATED" : "OPEN")"
+        }.joined(separator: "; ")
+        
+        if self.evidenceLocation.isEmpty {
+            self.evidenceLocation = "AttackSurfaceScan: \(summaryPointers)"
+        } else if !self.evidenceLocation.contains("AttackSurfaceScan") {
+            self.evidenceLocation += " | AttackSurfaceScan: \(summaryPointers)"
+        }
+        
+        let noteEntry = "\n[Automated Scan Correlated on \(Date().formatted(date: .abbreviated, time: .shortened))]: Attached \(correlatedFindings.count) finding(s) (\(openFindingsCount) open)."
+        if !self.auditorNotes.contains(noteEntry.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            self.auditorNotes += noteEntry
+        }
+        
+        autoSave(explicitTrigger: true)
     }
     
     private func autoSave(explicitTrigger: Bool = false) {

@@ -10,6 +10,7 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct EvidenceLockerView: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \EvidenceArtifact.addedDate, order: .reverse) private var artifacts: [EvidenceArtifact]
     
@@ -79,14 +80,23 @@ struct EvidenceLockerView: View {
                 }
             }
             .searchable(text: $searchText, prompt: "Search evidence manifest...")
-            .navigationTitle("Evidence Locker")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(action: { showingFileImporter = true }) {
-                        Label("Add Artifact", systemImage: "plus")
-                    }
-                }
-            }
+                        .navigationTitle("Evidence Locker")
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) { // 👈 Added
+                                Button("Done") {
+                                    dismiss()
+                                }
+                            }
+                            
+                            ToolbarItem(placement: .primaryAction) {
+                                Button(action: { showingFileImporter = true }) {
+                                    Label("Add Artifact", systemImage: "plus")
+                                }
+                            }
+                        }
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: [.item],
