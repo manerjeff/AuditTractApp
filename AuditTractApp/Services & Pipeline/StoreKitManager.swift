@@ -79,11 +79,19 @@ final class StoreKitManager: ObservableObject {
         defer { purchaseInProgress = false }
         
         do {
-            #if os(visionOS)
-            let result = try await product.purchase(confirmIn: .current)
-            #else
+#if os(visionOS)
+            guard let windowScene = await MainActor.run(body: {
+                UIApplication.shared.connectedScenes
+                    .compactMap { $0 as? UIWindowScene }
+                    .first
+            }) else {
+                self.errorMessage = "Unable to locate active scene for purchase."
+                return false
+            }
+            let result = try await product.purchase(confirmIn: windowScene)
+#else
             let result = try await product.purchase()
-            #endif
+#endif
             
             switch result {
             case .success(let verification):

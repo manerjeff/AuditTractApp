@@ -49,33 +49,29 @@ struct PaywallView: View {
                         // Branding Header
                         VStack(spacing: 8) {
                             Group {
-                                if let appIcon = UIImage(named: "AppIcon") ?? UIImage(named: "AppIcon60x60") {
-                                    Image(uiImage: appIcon)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                } else {
-                                    // Fallback: Custom branded compliance shield
-                                    Image(systemName: "shield.checkered")
+                                #if os(macOS)
+                                if let nsIcon = NSImage(named: "AppIcon") {
+                                    Image(nsImage: nsIcon)
                                         .resizable()
                                         .scaledToFit()
-                                        .foregroundStyle(
-                                            LinearGradient(
-                                                colors: [Color(hex: "E5A96A"), Color(hex: "B87333")],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
+                                } else {
+                                    brandShieldIcon
                                 }
+                                #else
+                                if let uiIcon = UIImage(named: "AppIcon") ?? UIImage(named: "AppIcon60x60") {
+                                    Image(uiImage: uiIcon)
+                                        .resizable()
+                                        .scaledToFit()
+                                } else {
+                                    brandShieldIcon
+                                }
+                                #endif
                             }
                             .frame(width: 60, height: 60)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .shadow(color: Color.black.opacity(0.3), radius: 8, x: 0, y: 4)
                             .padding(.bottom, 4)
 
-                            //Image(systemName: "shield.checkered")
-                                //.font(.system(size: 46))
-                                //.foregroundColor(TractColor.copper)
-                            
                             Text("AuditTract Pro")
                                 .font(.largeTitle)
                                 .bold()
@@ -253,5 +249,11 @@ struct PaywallView: View {
                 dismiss()
             }
         }
+    }
+    private var brandShieldIcon: some View {
+        Image(systemName: "shield.checkered")
+            .resizable()
+            .scaledToFit()
+            .foregroundColor(TractColor.copper)
     }
 }
